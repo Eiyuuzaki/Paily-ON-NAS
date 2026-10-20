@@ -1,0 +1,309 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 发布 Release 需要
+
+jobs:
+  # ── 1. 校验：能否编译、是否通过 vet ─────────────────────────────────────────
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+  # ── 2. 交叉编译 paily-core 多架构二进制 ─────────────────────────────────────
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            suffix: linux-armv7
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build paily-core
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" \
+            -o dist/paily-core-${{ matrix.suffix }} ./cmd/server
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paily-core-${{ matrix.suffix }}
+          path: dist/paily-core-${{ matrix.suffix }}
+          if-no-files-found: error
+
+  # ── 3. 编译配套服务（paily-fetch / paily-check）─────────────────────────────
+  #  这两个服务不在本仓库，从上游克隆后编译，结果一并打进 Release。
+  #  上游已归档但代码仍可访问；如果将来不可访问，把 clone 地址换成你的镜像即可。
+  build-companions:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            suffix: linux-armv7
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Clone upstream services
+        run: |
+          git clone --depth 1 https://github.com/openpaily/paily-fetch.git fetch
+          git clone --depth 1 https://github.com/openpaily/paily-check.git check
+
+      - name: Build paily-fetch
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        working-directory: fetch
+        run: |
+          mkdir -p ../dist
+          go build -trimpath -ldflags="-s -w" \
+            -o ../dist/paily-fetch-${{ matrix.suffix }} ./cmd/fetcher
+
+      - name: Build paily-check
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        working-directory: check
+        run: |
+          go build -trimpath -ldflags="-s -w" \
+            -o ../dist/paily-check-${{ matrix.suffix }} ./cmd/checker
+
+      - name: List built files
+        run: ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companions-${{ matrix.suffix }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ── 4. 打标签时自动发布 Release ─────────────────────────────────────────────
+  release:
+    needs: [build, build-companions]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare release files
+        run: |
+          set -e
+          mkdir -p release
+
+          # ── 1. 独立二进制（放在根目录，便于单独下载）──────────────
+          cp artifacts/paily-core-*  release/
+          cp artifacts/paily-fetch-* release/
+          cp artifacts/paily-check-* release/
+
+          # ── 2. 配置文件包（目录不能直接作为 Release 资产，打包成 tar.gz）
+          #     注意：GitHub 会把以 "." 开头的资产名改成 "default."，
+          #     所以 .env.example 只放进压缩包，不放根目录。
+          mkdir -p cfgs/etc cfgs/scripts cfgs/ui
+          cp docker-compose.yml Dockerfile config.example.yaml LICENSE README.md cfgs/
+          cp .env.example cfgs/
+          cp etc/core.yaml.example etc/check.yaml.example cfgs/etc/
+          cp scripts/.keep cfgs/scripts/
+          cp ui/nginx.conf cfgs/ui/
+          tar -czf release/paily-on-nas-configs.tar.gz -C cfgs .
+
+          # ── 3. 各架构一键部署包（二进制 + 全部配置）─────────────
+          for arch in arm64 amd64 armv7; do
+            d="bundle-$arch/paily-on-nas"
+            mkdir -p "$d/bin"
+            cp docker-compose.yml Dockerfile config.example.yaml LICENSE README.md "$d/"
+            cp .env.example "$d/.env.example"
+            mkdir -p "$d/etc" "$d/scripts" "$d/ui"
+            cp etc/core.yaml.example etc/check.yaml.example "$d/etc/"
+            cp scripts/.keep "$d/scripts/"
+            cp ui/nginx.conf "$d/ui/"
+            cp "artifacts/paily-core-linux-$arch"  "$d/bin/paily-core"
+            cp "artifacts/paily-fetch-linux-$arch" "$d/bin/paily-fetch"
+            cp "artifacts/paily-check-linux-$arch" "$d/bin/paily-check"
+            tar -czf "release/paily-on-nas-$arch-bundle.tar.gz" -C "bundle-$arch" paily-on-nas
+          done
+
+          # ── 4. 源码快照
+          git archive --format=tar.gz --prefix=paily-on-nas/ \
+            -o release/paily-on-nas-source.tar.gz HEAD
+
+          # ── 5. 校验（只对文件，排除目录和自身）
+          cd release
+          find . -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS.txt
+          echo "--- 发布内容 ---"
+          ls -lh
+          echo "--- 资产数量: $(find . -maxdepth 1 -type f | wc -l) ---"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: false
+          body: |
+            > **把一台闲置的 NAS，变成你自己的节点聚合中枢。**
+            >
+            > 抓取公开订阅源 → 去重 → 测活 → 评分 → 生成 Clash / Sing-box / Base64 订阅。
+
+            ## 免责声明
+
+            **本项目仅供个人学习、技术研究与自用实验，严禁用于任何商业用途或对外提供服务。**
+
+            - 本项目**不提供、不托管、不分发任何代理节点**，所有节点来自互联网公开源，合法性由源方负责
+            - 严禁用于违反所在国家或地区法律法规的用途，使用者承担全部责任
+            - 订阅接口默认**无认证**，请仅在内网使用，**不要做公网映射**
+            - 本项目按「现状」提供，不附带任何明示或暗示担保
+
+            详见 [README](https://github.com/Eiyuuzaki/Paily-ON-NAS#️-免责声明请务必阅读)。
+
+            ---
+
+            ## 下载说明
+
+            ### 🎯 推荐：一键部署包
+
+            按你的架构选一个，**解压即用**（已含主服务 + 两个配套服务 + 全部配置模板）：
+
+            | 架构 | 文件 | 适用设备 |
+            | --- | --- | --- |
+            | **ARM64** | `paily-on-nas-arm64-bundle.tar.gz` | 群晖、威联通、fnOS、极空间、树莓派 4/5 —— **主要目标** |
+            | x86_64 | `paily-on-nas-amd64-bundle.tar.gz` | x86 NAS / 服务器 / 软路由 |
+            | ARMv7 | `paily-on-nas-armv7-bundle.tar.gz` | 32 位 ARM 老设备 |
+
+            ```bash
+            tar -xzf paily-on-nas-arm64-bundle.tar.gz
+            cd paily-on-nas
+
+            # 1. 改密钥（把 CHANGE_ME 换掉）
+            cp .env.example .env
+            vi .env
+            # 生成密钥：openssl rand -hex 24
+
+            # 2. 准备配置
+            cp etc/core.yaml.example  etc/core.yaml
+            cp etc/check.yaml.example etc/check.yaml
+            # 把 .env 里的 CHECKER_SECRET 同步填进这两个文件
+
+            # 3. 启动
+            docker compose up -d
+
+            # 4. 灌入节点来源（可选，也可以用管理界面加）
+            #    订阅地址：http://<NAS-IP>:21380/clash
+            ```
+
+            > **三处密钥必须一致**：`.env` 的 `CHECKER_SECRET`、`etc/core.yaml` 的
+            > `checkers[0].secret`、`etc/check.yaml` 的 `core.secret`。
+            > 因为 `checkers` 是列表，viper 无法用环境变量覆盖，只能写死在配置文件里。
+            > 不一致的表现是测活服务一直 401。
+            >
+            > **x86 用户注意**：`.env.example` 里的并发参数是按 ARM 8 核调的，
+            > 文件末尾有 x86 调优建议（`INITIAL_CONCURRENCY` 可提到 128~256）。
+            > `ulimits.nofile: 65536` 不要调低，否则高并发测活会卡死。
+
+            ### 手动组装
+
+            如果只想更新某个组件，可以单独下载：
+
+            | 文件 | 说明 |
+            | --- | --- |
+            | `paily-core-linux-{arm64,amd64,armv7}` | 主服务（本仓库编译） |
+            | `paily-fetch-linux-{arm64,amd64,armv7}` | 抓取服务（上游编译） |
+            | `paily-check-linux-{arm64,amd64,armv7}` | 测活服务（上游编译） |
+            | `paily-core-darwin-{arm64,amd64}` | macOS 版主服务（仅调试用） |
+            | `paily-on-nas-configs.tar.gz` | 全部配置模板（compose / env / etc / ui） |
+            | `paily-on-nas-source.tar.gz` | 完整源码快照 |
+            | `SHA256SUMS.txt` | 校验文件 |
+
+            > 配套服务与主服务只通过 HTTP API 通信，无代码依赖，因此直接使用上游编译产物。
+            > macOS 版只含主服务，配套服务需在 Linux 上运行。
+
+            ---
+
+            ## 运行要求
+
+            - **数据库必须用 PostgreSQL**：静态编译不含 sqlite 驱动，配 sqlite 会报
+              `go-sqlite3 requires cgo to work`
+            - 需要 `paily-core` + `paily-fetch` + `paily-check` + PostgreSQL 四个组件
+            - 环境变量前缀 `PAILY_`，优先级高于配置文件
+
+            ## 校验完整性
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ---
+
+            ## 项目说明
+
+            - 上游：[openpaily/paily-core](https://github.com/openpaily/paily-core)（已归档，AGPL-3.0）
+            - 本版本相对上游的改动：内联 paily-fetch 依赖（解除死依赖）、新增 `Latency` 过滤字段、
+              修复 Dockerfile、加入多架构 CI
+            - 详见 [README](https://github.com/Eiyuuzaki/Paily-ON-NAS#项目特色)
