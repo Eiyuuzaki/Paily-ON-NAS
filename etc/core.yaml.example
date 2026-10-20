@@ -1,0 +1,47 @@
+# Paily ON NAS —— 主服务配置
+#
+# 复制为 core.yaml 后使用：
+#   cp etc/core.yaml.example etc/core.yaml
+#
+# 密钥（管理员密码 / 服务密钥 / JWT / 数据库 DSN）统一由 .env 经 docker compose
+# 注入，这里只留占位值。环境变量优先级高于本文件。
+#
+# 唯一必须写在这里的是 checkers[].secret —— 因为 viper 无法用环境变量覆盖列表，
+# 你必须手动把 .env 里的 CHECKER_SECRET 填进来，并保持与 etc/check.yaml 的
+# core.secret 完全一致。
+
+server:
+  # HTTP 监听端口（容器内固定 21380，不要在容器里改）
+  port: 21380
+  # 浏览器跨域白名单；界面走同源反代时用不到，留作本地调试
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:21381"
+  # 记录全部请求（排查问题时临时改为 true）
+  verbose: false
+
+database:
+  # 只支持 postgres（sqlite 驱动需要 cgo，本部署为静态编译，未启用）
+  type: postgres
+  # 会被 PAILY_DATABASE_DSN 覆盖；此处仅为脱离 compose 手动运行时的占位
+  dsn: "host=postgres port=5432 user=paily password=CHANGE_ME dbname=paily sslmode=disable TimeZone=Asia/Shanghai"
+  max_open_conns: 6
+  max_idle_conns: 2
+  conn_max_lifetime_minutes: 30
+
+# 以下三项会被 PAILY_AUTH_* 环境变量覆盖，保持占位即可
+auth:
+  admin_password: "CHANGE_ME"
+  service_secret: "CHANGE_ME"
+  jwt_secret: "CHANGE_ME_CHANGE_ME_CHANGE_ME_32"
+
+# 测活后端列表。tag 是测活视角的标识，secret 必须与 etc/check.yaml 对应
+checkers:
+  - tag: "local"
+    # ！必须与 .env 的 CHECKER_SECRET、etc/check.yaml 的 core.secret 三者一致
+    secret: "CHANGE_ME_checker_secret"
+    # 该 tag 的订阅默认地区策略：common / all / other
+    default_preset: "common"
+
+# 全局默认地区策略
+default_preset: "common"

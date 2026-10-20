@@ -1,0 +1,6 @@
+# 本目录放 paily-check 的解锁检测脚本（.js，goja 引擎）。
+#
+# 本仓库未附带任何脚本，此占位文件保证目录被 git 正常保留。
+# 脚本开发规范见上游 paily-check/docs/scripting.md
+#
+# 没有脚本不影响测活 —— 只有「流媒体解锁检测」和「filter_unlock 参数」会失效。
