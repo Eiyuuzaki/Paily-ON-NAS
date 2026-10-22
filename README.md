@@ -172,7 +172,13 @@ go-sqlite3 requires cgo to work. This is a stub
 | `DEEP_PING_CONCURRENCY` | 24 | 可提到 48~96 |
 | `FETCH_CONCURRENCY` | 16 | 可提到 32 |
 | `ulimits.nofile` | 65536 | 保持不变（这是硬性要求）|
-| `CHECK_CRON` | 每 30 分钟 | 视 CPU 可缩短到 10~15 分钟 |
+| `FETCH_INTERVAL` | 10800（3 小时） | 可缩到 1800~3600 |
+| `CHECK_CRON` | 每 2 小时 | 视 CPU 可缩到 30~60 分钟 |
+
+> **为什么抓取默认 3 小时、测活默认 2 小时？**
+> 公开免费源的更新频率本就是几小时到一天，抓太勤没有收益。而测活才是真正的连接大头——
+> 每轮要对上千个节点发起 TCP 连接，在家宽上过于频繁可能引起 ISP 侧异常。
+> 按 1790 个节点估算：每 2 小时一轮 ≈ 每天 2.1 万次连接；若改成 30 分钟一轮则是 8.6 万次。
 
 **你需要自己修改 `docker-compose.yml` 和 `.env` 中的并发参数。** 具体做法：
 
@@ -380,8 +386,21 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 单独构建镜像：
 
 ```bash
-docker build --build-arg TARGETARCH=arm64 -t paily-on-nas/core .
+docker build --build-arg TARGETARCH=arm64 -t paily-on-nas/core:local .
 ```
+
+> **`docker-compose.yml` 默认使用现成镜像，不自动构建**
+>
+> `core` 服务配置的是 `image: paily-on-nas/core:local` 而非 `build:`。原因是 compose 的
+> `build.context` 需要**完整仓库源码**（`go.mod`、`internal/`、`third_party/` 等），
+> 而实际部署目录里通常只有二进制和配置文件。
+>
+> 两种用法任选：
+>
+> | 场景 | 做法 |
+> | --- | --- |
+> | 已有镜像（默认） | `docker build -t paily-on-nas/core:local .` 先构建好，再 `docker compose up -d` |
+> | 想用 compose 直接构建 | 取消 `docker-compose.yml` 里 `build:` 段的注释，并确保仓库源码在 context 内 |
 
 > **必须使用 PostgreSQL**
 > sqlite 驱动（`mattn/go-sqlite3`）需要 cgo。用 `CGO_ENABLED=0` 编译后若配置
@@ -500,6 +519,92 @@ oapi-codegen -config oapi-codegen.yaml api/openapi/spec.yaml
 - 每次 push / PR：`go build ./...` + `go vet ./...`
 - 构建 5 个平台：`linux-arm64`、`linux-amd64`、`linux-armv7`、`darwin-arm64`、`darwin-amd64`
 - 打 `v*` 标签：自动创建 Release，附带二进制、`config.example.yaml`、源码快照和 `SHA256SUMS.txt`
+
+## 常见故障排查
+
+以下是实际部署中踩过的坑，按出现频率排序。
+
+### 1. `paily-fetch` 报 `lookup core: no such host` / `connection refused`
+
+**症状**：抓取日志显示 `dial tcp: lookup core on 127.0.0.11:53: no such host`，
+或 `dial tcp 172.20.0.3:21380: connect: connection refused`。
+
+**原因是两个容器不在同一 Docker 网络**。常见于修改过 compose 的 `name:` 字段（项目名）
+之后——compose 会用新项目名创建新网络，但旧容器还挂在旧网络上。
+
+**诊断**：
+
+```bash
+for c in paily-core paily-fetch paily-check paily-postgres; do
+  printf "%-16s " $c
+  docker inspect $c --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}={{\$v.IPAddress}} {{end}}'
+done
+```
+
+所有容器应该在**同一个网络名**下（例如都在 `paily-on-nas_paily`）。
+
+**修复**：彻底删除后重建
+
+```bash
+docker rm -f paily-core paily-fetch paily-check paily-postgres paily-ui
+docker network rm <旧网络名>
+docker compose up -d
+```
+
+> **不要给容器指定自定义 `dns:`**。Docker 内嵌 DNS（`127.0.0.11`）负责解析服务名，
+> 一旦在 compose 里写死外部 DNS，容器就**无法解析 `core` 这类服务名**，抓取直接失败。
+> 如果确实有 DNS 问题，应该修宿主机的 `/etc/resolv.conf`，而不是给容器加 `dns:`。
+
+### 2. 订阅能打开但一个节点都没有
+
+依次排查：
+
+```bash
+# a) 确认有存活节点
+docker compose exec -T postgres psql -U paily -d paily \
+  -tAc "select count(*) from nodes where alive"
+
+# b) 看当前过滤规则
+curl -s http://127.0.0.1:21380/api/v1/config \
+  -H "Authorization: Bearer $TOKEN" | grep node_distribute_filter
+
+# c) 看缓存重建结果（重启 core 后观察日志）
+docker compose logs core | grep "rebuild complete"
+```
+
+**最常见原因是 `node_distribute_filter` 里的延迟阈值太严**。公开免费节点的延迟普遍在
+1~5 秒，设 `Latency > 800` 会把几乎所有节点滤掉。参考实测分布（1790 节点、51 个存活）：
+
+| 阈值 | 剩余节点 |
+| --- | --- |
+| ≤1000ms | 3 |
+| ≤2000ms | 9 |
+| ≤3000ms | 14 |
+| ≤5000ms | 24 |
+
+建议先用 `Latency > 5000` 或干脆去掉延迟条件，确认链路通了再逐步收紧。
+
+> 注意：`/clash` 在无候选节点时**仍返回 HTTP 200 和空内容**，不能只看状态码。
+
+### 3. 客户端导入订阅报 `FormatException: Scheme not starting with alphabetic character`
+
+**复制地址时混入了不可见字符**（空格、零宽空格 U+200B、BOM）。报错里的 `^` 会指向
+那个字符的位置。手动重新输入一遍地址即可，或先粘到备忘录清掉首尾空白再复制。
+
+### 4. 手机连不上但 PC 正常
+
+先确认手机和 NAS 在同一网段（比较 IP 前三位）。若相同仍不通，检查路由器的
+**AP 隔离 / 客户端隔离 / 2.4G-5G 隔离**是否开启——这些选项会阻断同网段设备互访。
+
+**快速验证**：用手机浏览器直接访问订阅地址。能下载文件说明网络通，问题在客户端配置；
+打不开则是网络隔离，需在路由器侧关闭隔离。
+
+### 5. 测活进度卡住不动、CPU 掉到 0%
+
+**容器文件描述符耗尽**。默认 `ulimit -n` 只有 1024，高并发时会把 fd 用光。
+本项目的 `docker-compose.yml` 里已给 `check` 服务加上 `ulimits.nofile: 65536`，**不要删**。
+
+若仍需提高并发，同时观察 `INITIAL_CONCURRENCY` 和 fd 上限，两者要匹配。
 
 ## 文档
 

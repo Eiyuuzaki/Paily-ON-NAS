@@ -44,14 +44,17 @@ services:
       - paily
 
   # ───────────────────────────────────────────────────── 主服务（中枢）
-  # 这是本仓库唯一需要从源码构建的服务
+  # 两种用法，任选其一：
+  #   1) 本地已有镜像（默认）：先用 `docker build -t paily-on-nas/core:local .` 构建好
+  #   2) 从源码构建：取消下面 build 段的注释，并确保仓库源码在 build context 内
   core:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        TARGETARCH: ${TARGETARCH:-arm64}
     image: paily-on-nas/core:local
+    # 从源码构建时取消下面注释（需要仓库源码在 build context 内）：
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     TARGETARCH: ${TARGETARCH:-arm64}
     container_name: paily-core
     restart: unless-stopped
     depends_on:
