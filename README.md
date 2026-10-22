@@ -150,6 +150,53 @@ go-sqlite3 requires cgo to work. This is a stub
 用 `CGO_ENABLED=0` 编译（NAS 场景必然如此）后，配 sqlite 直接启动失败。
 本项目如实注明，不做误导。
 
+### 🎨 重新设计的 Web 管理界面（Material Design 3）
+
+原版前端用的是 Element Plus，界面比较朴素。本版本整体改写为 **Vuetify 4 + Material Design 3**：
+
+- **明暗双主题**，一键切换，偏好存 localStorage
+- **响应式布局**：桌面常驻侧边栏，手机自动折叠为抽屉
+- **图标零负担**：用 `@mdi/js` 的 SVG path 按需引入，替代 3.5MB 的 MDI 字体
+  （构建产物从 4.82 MB 降到 1.08 MB）
+- 仪表盘增加**节点存活率环形图**与**实际流量分布条**（机场 vs 公益）
+
+### ⚖️ 来源优先级 + 机场额度
+
+这是相对上游最实用的两个新增能力。
+
+**来源优先级**：每个来源可设 `priority`（0 公益 / 1 机场 / 2 最高）。
+分发时按 `priority_ratio`（默认 0.6）分配名额——高优先级来源先占 60% 的位置，
+不足或超出的部分再由公益节点补齐。机场节点不再被海量免费节点稀释。
+
+```
+priority_ratio = 0.6  →  订阅中约 60% 是机场节点，40% 是公益节点
+```
+
+**机场额度**：抓取订阅时解析 HTTP 响应头的 `subscription-userinfo`
+（sing-box 标准）：
+
+```
+subscription-userinfo: upload=0; download=0; total=58339622912; expire=2108019779
+```
+
+解析出的已用 / 总量 / 到期时间会存进来源表，在管理界面的「额度」页与列表进度条中展示。
+**注意**：这只能读取订阅头里携带的信息；大多数机场接口不返回额度，此时该字段为空，属正常。
+
+### 📊 实际流量统计（可选）
+
+内置 `traffic reporter`，定期轮询本机 mihomo 的 `/proxies` 接口，把每个节点的
+累计上传/下载按来源聚合，在仪表盘展示"机场 vs 公益"的**实际**流量占比。
+
+默认关闭，需在 `.env` 里指定：
+
+```bash
+MIHOMO_API_URL=http://172.17.0.1:9090
+MIHOMO_API_SECRET=你的mihomo密钥
+```
+
+> **前提**：只有经过该 mihomo 的流量才会被统计。若手机用订阅直连节点（不经 NAS），
+> 这部分流量无法统计——此时仪表盘会提示"暂无流量数据"。
+
 ---
 
 ## 平台支持：**主要面向 ARM NAS**
@@ -437,6 +484,7 @@ cp config.example.yaml config.yaml
 | `node_alive_check_window_minutes` | 240 | 最新初筛的存活窗口（分钟） |
 | `fetch_dead_window_days` | 7 | 来源抓取失效判定窗口（天） |
 | `max_distribute` | 200 | 单次订阅最多输出节点数 |
+| `priority_ratio` | 0.6 | 高优先级（机场）节点占订阅的比例，0~1 |
 | `grade_a_min` / `grade_b_min` / `grade_c_min` | 0.75 / 0.50 / 0.25 | 等级阈值 |
 
 ---
@@ -450,10 +498,11 @@ cp config.example.yaml config.yaml
 
 ```text
 Server, Protocol, Password, Hash, Region, Alive, Score, Latency,
-SourceIDs, Sources, RawConfig, Streaming
+SourcePriority, SourceIDs, Sources, RawConfig, Streaming
 ```
 
 > `Latency` 是本仓库新增的字段（毫秒，-1 表示不可达）。
+> `SourcePriority` 也是新增的（0 公益 / 1 机场 / 2 最高），可直接用于区分优先级来源。
 
 常用写法：
 
@@ -489,8 +538,32 @@ curl -X PUT http://127.0.0.1:21380/api/v1/config \
 
 ## 管理界面
 
-`paily-frontend` 提供 Web 控制台（需单独部署）：仪表盘、来源管理、节点管理、
-Sponsor、筛选引擎预览、运行时配置、格式配置、日志。
+本仓库的 `ui/` 目录就是完整的前端源码（Vue 3 + Vuetify 4 + ECharts），
+不再依赖外部的 `paily-frontend` 仓库。
+
+页面：仪表盘、节点管理、来源管理（含优先级 / 额度）、赞助商、过滤测试台、
+运行时配置、格式配置、日志。
+
+### 本地开发
+
+```bash
+cd ui
+npm install
+npm run dev          # http://localhost:5173，自动代理到 localhost:21380
+```
+
+### 构建与部署
+
+```bash
+cd ui
+npm run build        # 产物在 ui/dist/
+```
+
+`docker-compose.yml` 里的 `ui` 服务（nginx）直接挂载 `./ui/dist`，
+用 `docker compose --profile ui up -d` 启动，访问 `http://<NAS-IP>:21381`。
+
+nginx 配置（`ui/nginx.conf`）做了同源反代：`/api/` → core，`/clash`、`/singbox`、
+`/base64` 也一并代理，所以界面里复制的订阅链接是相对路径，不需要额外配置域名。
 
 ---
 
