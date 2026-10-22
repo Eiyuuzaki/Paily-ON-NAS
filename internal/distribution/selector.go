@@ -38,11 +38,59 @@ func commonRegionSet() map[string]bool {
 //   - preset "other":  excludes common regions, then same as "all"
 //
 // Default (empty string) behaves as "common".
-func SelectWithPreset(entries []*cache.NodeCacheEntry, maxDistribute int, preset string) []SelectedNode {
+//
+// priorityRatio controls how many of the distributed slots go to high-priority
+// nodes (SourcePriority >= 1). 0.6 means 60% high-priority, 40% low-priority.
+// If either tier is empty, no mixing is done and the normal algorithm runs.
+func SelectWithPreset(entries []*cache.NodeCacheEntry, maxDistribute int, preset string, priorityRatio float64) []SelectedNode {
 	if len(entries) == 0 || maxDistribute <= 0 {
 		return nil
 	}
-	var raw []*cache.NodeCacheEntry
+
+	// Split by priority tier.
+	var tier1, tier0 []*cache.NodeCacheEntry
+	for _, e := range entries {
+		if e.SourcePriority >= 1 {
+			tier1 = append(tier1, e)
+		} else {
+			tier0 = append(tier0, e)
+		}
+	}
+
+	// No mixing needed — all nodes are same tier.
+	if len(tier1) == 0 || len(tier0) == 0 {
+		return assembleOutput(selectByPreset(entries, maxDistribute, preset))
+	}
+
+	// Split quota between tiers.
+	tier1Quota := int(float64(maxDistribute) * priorityRatio)
+	if tier1Quota < 0 {
+		tier1Quota = 0
+	}
+	if tier1Quota > maxDistribute {
+		tier1Quota = maxDistribute
+	}
+	if tier1Quota > len(tier1) {
+		tier1Quota = len(tier1)
+	}
+
+	// Select from high-priority tier first.
+	tier1Selected := selectByPreset(tier1, tier1Quota, preset)
+	remaining := maxDistribute - len(tier1Selected)
+
+	// Fill rest from low-priority tier.
+	var tier0Selected []*cache.NodeCacheEntry
+	if remaining > 0 {
+		tier0Selected = selectByPreset(tier0, remaining, preset)
+	}
+
+	// Combine and sort by priority first, then region, then score.
+	combined := append(tier1Selected, tier0Selected...)
+	return assembleOutputPriority(combined)
+}
+
+// selectByPreset dispatches to the correct collection mode.
+func selectByPreset(entries []*cache.NodeCacheEntry, maxDistribute int, preset string) []*cache.NodeCacheEntry {
 	switch preset {
 	case "other":
 		cs := commonRegionSet()
@@ -52,18 +100,17 @@ func SelectWithPreset(entries []*cache.NodeCacheEntry, maxDistribute int, preset
 				filtered = append(filtered, e)
 			}
 		}
-		raw = collectAll(filtered, maxDistribute)
+		return collectAll(filtered, maxDistribute)
 	case "all":
-		raw = collectAll(entries, maxDistribute)
+		return collectAll(entries, maxDistribute)
 	default: // "common"
-		raw = collectCommon(entries, maxDistribute)
+		return collectCommon(entries, maxDistribute)
 	}
-	return assembleOutput(raw)
 }
 
 // Select is kept for callers that do not specify a preset (defaults to "common").
 func Select(entries []*cache.NodeCacheEntry, maxDistribute int) []SelectedNode {
-	return SelectWithPreset(entries, maxDistribute, "common")
+	return SelectWithPreset(entries, maxDistribute, "common", 0.6)
 }
 
 // ── mode implementations ──────────────────────────────────────────────────────
@@ -252,6 +299,44 @@ func assembleOutput(nodes []*cache.NodeCacheEntry) []SelectedNode {
 	for _, r := range regions {
 		pool := regionMap[r]
 		sort.Slice(pool, func(i, j int) bool { return pool[i].Score > pool[j].Score })
+		for seq, e := range pool {
+			seqNo := seq + 1
+			out = append(out, SelectedNode{
+				Entry: e,
+				SeqNo: seqNo,
+				SeqID: seqID(r, seqNo),
+			})
+		}
+	}
+	return out
+}
+
+// assembleOutputPriority sorts collected nodes by priority first (high→low),
+// then region order, then score desc. SeqNo is per-region.
+func assembleOutputPriority(nodes []*cache.NodeCacheEntry) []SelectedNode {
+	regionMap := make(map[string][]*cache.NodeCacheEntry)
+	for _, e := range nodes {
+		r := normaliseRegion(e.Region)
+		regionMap[r] = append(regionMap[r], e)
+	}
+
+	// Sort regions by naming order.
+	regions := make([]string, 0, len(regionMap))
+	for r := range regionMap {
+		regions = append(regions, r)
+	}
+	sortRegionsByNamingOrder(regions)
+
+	var out []SelectedNode
+	for _, r := range regions {
+		pool := regionMap[r]
+		// Sort by priority desc, then score desc.
+		sort.Slice(pool, func(i, j int) bool {
+			if pool[i].SourcePriority != pool[j].SourcePriority {
+				return pool[i].SourcePriority > pool[j].SourcePriority
+			}
+			return pool[i].Score > pool[j].Score
+		})
 		for seq, e := range pool {
 			seqNo := seq + 1
 			out = append(out, SelectedNode{

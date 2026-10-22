@@ -61,16 +61,17 @@ func RegionOrder() []string {
 
 // nodeFields holds the values passed to the naming expression as node.*.
 type nodeFields struct {
-	Region     string          `expr:"region"`
-	RegionFlag string          `expr:"region_flag"`
-	Grade      string          `expr:"grade"`
-	Score      float64         `expr:"score"`
-	Seq        string          `expr:"seq"`
-	Server     string          `expr:"server"`
-	Protocol   string          `expr:"protocol"`
-	Alive      bool            `expr:"alive"`
-	Streaming  map[string]bool `expr:"streaming"`
-	Sponsor    string          `expr:"sponsor"`
+	Region        string          `expr:"region"`
+	RegionFlag    string          `expr:"region_flag"`
+	Grade         string          `expr:"grade"`
+	Score         float64         `expr:"score"`
+	Seq           string          `expr:"seq"`
+	Server        string          `expr:"server"`
+	Protocol      string          `expr:"protocol"`
+	Alive         bool            `expr:"alive"`
+	Streaming     map[string]bool `expr:"streaming"`
+	Sponsor       string          `expr:"sponsor"`
+	SourcePriority int           `expr:"source_priority"` // 0=公益, 1=机场/付费, 2=最高
 }
 
 // namingEnv is the top-level context for the node naming expression.
@@ -156,16 +157,17 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 
 	env := namingEnv{
 		Node: nodeFields{
-			Region:     regionDisplay,
-			RegionFlag: flagFor(region),
-			Grade:      gradeFromScore(entry.Score, gradeA, gradeB, gradeC),
-			Score:      entry.Score,
-			Seq:        seqID(region, seqNo),
-			Server:     entry.Server,
-			Protocol:   entry.Protocol,
-			Alive:      entry.Alive,
-			Streaming:  entry.StreamingResult,
-			Sponsor:    entry.SponsorText,
+			Region:         regionDisplay,
+			RegionFlag:     flagFor(region),
+			Grade:          gradeFromScore(entry.Score, gradeA, gradeB, gradeC),
+			Score:          entry.Score,
+			Seq:            seqID(region, seqNo),
+			Server:         entry.Server,
+			Protocol:       entry.Protocol,
+			Alive:          entry.Alive,
+			Streaming:      entry.StreamingResult,
+			Sponsor:        entry.SponsorText,
+			SourcePriority: entry.SourcePriority,
 		},
 		UnlockFlags: unlockFlags,
 		FilterMode:  filterMode,

@@ -29,6 +29,10 @@ type NodeCacheEntry struct {
 	SpeedKbps       int             // from latest deep_check for this tag
 	SourceIDs       []string        // all source UUIDs that map to this node
 
+	// 来源优先级（取该节点所有来源中的最大值）
+	// 0=公益, 1=机场/付费, 2=最高
+	SourcePriority int
+
 	// Sponsor text (filled by sponsor step in Rebuild)
 	SponsorText string
 

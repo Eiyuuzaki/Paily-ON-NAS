@@ -27,6 +27,7 @@ type Node struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
 	Hash      string    `gorm:"uniqueIndex;not null"` // sha256(protocol|server:port|auth)
 	Server    string    `gorm:"index;not null"`
+	Port      int       `gorm:"not null;default:0"`
 	Password  string    // primary auth field (uuid/password/psk)
 	Protocol  string    `gorm:"not null"`
 	Raw       string    `gorm:"not null"` // JSON compact of full clash proxy fields

@@ -95,6 +95,13 @@ func (h *Handler) PostResults(c *gin.Context) {
 				log.Error().Err(err).Str("source_id", sourceID.String()).Msg("node upsert failed")
 			}
 
+			// 2b. Store quota info from subscription-userinfo header.
+			if r.UsageInfo != nil {
+				if err := h.sourceSvc.UpdateUsage(ctx, sourceID, r.UsageInfo.Upload, r.UsageInfo.Download, r.UsageInfo.Total, r.UsageInfo.Expire); err != nil {
+					log.Warn().Err(err).Str("source_id", sourceID.String()).Msg("failed to update usage info")
+				}
+			}
+
 			// 3. Evaluate dead logic.
 			isDead, err := h.sourceSvc.EvaluateFetchDead(ctx, sourceID)
 			if err != nil {

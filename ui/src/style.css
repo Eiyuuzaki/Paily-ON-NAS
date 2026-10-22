@@ -1,0 +1,50 @@
+/* ── 全局基础样式（Vuetify 负责绝大多数样式，这里只做兜底与少量定制）── */
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* 页面切换过渡（X 轴交叉淡入淡出） */
+.page-slide-enter-active,
+.page-slide-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.page-slide-leave-active {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.page-slide-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+.page-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+/* 等宽字体（表达式、日志、节点地址） */
+.mono {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85em;
+}
+
+/* 让长表格在窄屏可横向滚动 */
+.table-scroll {
+  overflow-x: auto;
+}

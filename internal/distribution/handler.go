@@ -102,7 +102,8 @@ func (h *Handler) Distribute(
 		preset = string(*params.Preset)
 	}
 	maxDistribute := configInt(h.db, "max_distribute", 200)
-	selected := SelectWithPreset(candidates, maxDistribute, preset)
+	priorityRatio := configFloat(h.db, "priority_ratio", 0.6)
+	selected := SelectWithPreset(candidates, maxDistribute, preset, priorityRatio)
 
 	log.Debug().
 		Str("format", string(formatName)).
@@ -224,12 +225,26 @@ func loadFormatConfig(db *gorm.DB, formatName string, factory format.FormatFacto
 }
 
 // configInt reads an integer config value from the DB config table.
+// configInt reads an integer config value from the DB config table.
 func configInt(db *gorm.DB, key string, def int) int {
 	var row model.Config
 	if err := db.First(&row, "key = ?", key).Error; err != nil {
 		return def
 	}
 	v, err := strconv.Atoi(row.Value)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// configFloat reads a float config value from the DB config table.
+func configFloat(db *gorm.DB, key string, def float64) float64 {
+	var row model.Config
+	if err := db.First(&row, "key = ?", key).Error; err != nil {
+		return def
+	}
+	v, err := strconv.ParseFloat(row.Value, 64)
 	if err != nil {
 		return def
 	}

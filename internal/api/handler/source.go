@@ -149,7 +149,7 @@ func (h *SourceHandler) Update(c *gin.Context, id openapi_types.UUID) {
 		response.BadRequest(c, "invalid request body")
 		return
 	}
-	src, err := h.svc.Update(c.Request.Context(), id, req.Identifier, req.Info, req.Content)
+	src, err := h.svc.Update(c.Request.Context(), id, req.Identifier, req.Info, req.Content, req.Priority)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			response.NotFound(c, "source not found")
@@ -198,6 +198,11 @@ func (h *SourceHandler) IgnoreDead(c *gin.Context, id openapi_types.UUID) {
 func sourceToDetail(s *model.Source) api.SourceDetail {
 	st := api.SourceDetailStatus(s.Status)
 	tp := api.SourceDetailType(s.Type)
+	p := s.Priority
+	up := s.Upload
+	dn := s.Download
+	tt := s.Total
+	ex := s.Expire
 	return api.SourceDetail{
 		Id:         openapi_types.UUID(s.ID),
 		Identifier: s.Identifier,
@@ -208,12 +213,22 @@ func sourceToDetail(s *model.Source) api.SourceDetail {
 		IgnoreDead: &s.IgnoreDead,
 		CreatedAt:  &s.CreatedAt,
 		UpdatedAt:  &s.UpdatedAt,
+		Priority:   &p,
+		Upload:     &up,
+		Download:   &dn,
+		Total:      &tt,
+		Expire:     &ex,
 	}
 }
 
 func sourceToSummary(s *model.Source, latestFetchNodeCount *int) api.SourceSummary {
 	st := api.SourceSummaryStatus(s.Status)
 	tp := api.SourceSummaryType(s.Type)
+	p := s.Priority
+	up := s.Upload
+	dn := s.Download
+	tt := s.Total
+	ex := s.Expire
 	return api.SourceSummary{
 		Id:                   openapi_types.UUID(s.ID),
 		Identifier:           s.Identifier,
@@ -223,5 +238,10 @@ func sourceToSummary(s *model.Source, latestFetchNodeCount *int) api.SourceSumma
 		Type:                 tp,
 		IgnoreDead:           &s.IgnoreDead,
 		LatestFetchNodeCount: latestFetchNodeCount,
+		Priority:             &p,
+		Upload:               &up,
+		Download:             &dn,
+		Total:                &tt,
+		Expire:               &ex,
 	}
 }

@@ -396,6 +396,15 @@ type FetchResult struct {
 	Nodes     *[]map[string]interface{} `json:"nodes,omitempty"`
 	SourceId  openapi_types.UUID        `json:"source_id"`
 	Success   bool                      `json:"success"`
+	UsageInfo *UsageInfo                `json:"usage_info,omitempty"`
+}
+
+// UsageInfo defines model for UsageInfo.
+type UsageInfo struct {
+	Download int64 `json:"download"`
+	Expire   int64 `json:"expire"`
+	Total    int64 `json:"total"`
+	Upload   int64 `json:"upload"`
 }
 
 // FetchResultsRequest defines model for FetchResultsRequest.
@@ -553,6 +562,11 @@ type SourceDetail struct {
 	LatestFetchNodeCount *int               `json:"latest_fetch_node_count,omitempty"`
 	Status               SourceDetailStatus `json:"status"`
 	Type                 SourceDetailType   `json:"type"`
+	Priority             *int               `json:"priority,omitempty"`
+	Upload               *int64             `json:"upload,omitempty"`
+	Download             *int64             `json:"download,omitempty"`
+	Total                *int64             `json:"total,omitempty"`
+	Expire               *int64             `json:"expire,omitempty"`
 	UpdatedAt            *time.Time         `json:"updated_at,omitempty"`
 }
 
@@ -592,6 +606,11 @@ type SourceSummary struct {
 	LatestFetchNodeCount *int                `json:"latest_fetch_node_count,omitempty"`
 	Status               SourceSummaryStatus `json:"status"`
 	Type                 SourceSummaryType   `json:"type"`
+	Priority             *int                `json:"priority,omitempty"`
+	Upload               *int64              `json:"upload,omitempty"`
+	Download             *int64              `json:"download,omitempty"`
+	Total                *int64              `json:"total,omitempty"`
+	Expire               *int64              `json:"expire,omitempty"`
 }
 
 // SourceSummaryStatus defines model for SourceSummary.Status.
@@ -605,6 +624,7 @@ type SourceUpdateRequest struct {
 	Content    *string `json:"content,omitempty"`
 	Identifier *string `json:"identifier,omitempty"`
 	Info       *string `json:"info,omitempty"`
+	Priority   *int    `json:"priority,omitempty"`
 }
 
 // SponsorCreateRequest defines model for SponsorCreateRequest.

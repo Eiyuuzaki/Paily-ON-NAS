@@ -10,6 +10,7 @@ type SourceInfo struct {
 	Info       string
 	Status     string // "active" | "dead"
 	Content    string
+	Priority   int    // 0=公益, 1=机场/付费, 2=最高
 }
 
 // NodeFilterEnv is the evaluation context for node filter expressions.
@@ -27,6 +28,8 @@ type NodeFilterEnv struct {
 	Sources   []SourceInfo   // full source details for this node
 	RawConfig map[string]any // parsed clash proxy config map
 	Streaming map[string]bool
+	// SourcePriority is the max priority across all sources for this node.
+	SourcePriority int
 }
 
 // SourceFilterEnv is the evaluation context for source filter expressions.

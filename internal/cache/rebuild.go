@@ -195,9 +195,13 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 	}
 	sourcesByNode := make(map[uuid.UUID][]model.Source)
 	sourceIDsByNode := make(map[uuid.UUID][]string)
+	priorityByNode := make(map[uuid.UUID]int)
 	for _, r := range joinRows {
 		sourcesByNode[r.NodeID] = append(sourcesByNode[r.NodeID], r.Source)
 		sourceIDsByNode[r.NodeID] = append(sourceIDsByNode[r.NodeID], r.Source.ID.String())
+		if r.Source.Priority > priorityByNode[r.NodeID] {
+			priorityByNode[r.NodeID] = r.Source.Priority
+		}
 	}
 
 	// A7. Distribution filter expression (empty = no filter).
@@ -260,17 +264,18 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 			srcInfos := buildSourceInfos(sourcesByNode[n.ID])
 			latency := latestLatencyByTag[n.ID][tag]
 			nodeEnv := filter.NodeFilterEnv{
-				Server:    n.Server,
-				Protocol:  n.Protocol,
-				Hash:      n.Hash,
-				Region:    n.Region,
-				Alive:     true,
-				Score:     score,
-				Latency:   latency,
-				SourceIDs: sourceIDsByNode[n.ID],
-				Sources:   srcInfos,
-				RawConfig: sharedRawConfig[n.ID],
-				Streaming: streaming,
+				Server:         n.Server,
+				Protocol:       n.Protocol,
+				Hash:           n.Hash,
+				Region:         n.Region,
+				Alive:          true,
+				Score:          score,
+				Latency:        latency,
+				SourceIDs:      sourceIDsByNode[n.ID],
+				Sources:        srcInfos,
+				RawConfig:      sharedRawConfig[n.ID],
+				Streaming:      streaming,
+				SourcePriority: priorityByNode[n.ID],
 			}
 
 			if distributeFilterExpr != "" {
@@ -294,6 +299,7 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 				StreamingResult: streaming,
 				SpeedKbps:       dc.SpeedKbps,
 				SourceIDs:       sourceIDsByNode[n.ID],
+				SourcePriority:  priorityByNode[n.ID],
 				ProxyNode:       sharedProxy[n.ID],
 			}
 			entry.SponsorText = sponsorSvc.Match(ctx, nodeEnv)
@@ -369,6 +375,7 @@ func buildSourceInfos(srcs []model.Source) []filter.SourceInfo {
 			Info:       s.Info,
 			Status:     s.Status,
 			Content:    s.Content,
+			Priority:   s.Priority,
 		}
 	}
 	return out

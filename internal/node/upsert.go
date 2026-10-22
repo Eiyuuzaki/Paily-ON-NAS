@@ -66,6 +66,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 		hash     string
 		protocol string
 		server   string
+		port     int
 		password string
 		rawJSON  []byte
 	}
@@ -85,6 +86,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 			hash:     nodeHash(fields),
 			protocol: proto,
 			server:   srv,
+			port:     clashPort(fields),
 			password: auth,
 			rawJSON:  compact,
 		})
@@ -110,6 +112,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 				// Exists: refresh raw content and ensure mapping.
 				tx.Model(&existing).Updates(map[string]interface{}{
 					"raw":        string(p.rawJSON),
+					"port":       p.port,
 					"updated_at": time.Now(),
 				})
 				nodeID = existing.ID
@@ -119,6 +122,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 					ID:        uuid.New(),
 					Hash:      p.hash,
 					Server:    p.server,
+					Port:      p.port,
 					Password:  p.password,
 					Protocol:  p.protocol,
 					Raw:       string(p.rawJSON),

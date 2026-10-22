@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cleanup"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/fetcher"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/migrate"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/node"
@@ -28,6 +31,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/source"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/sponsor"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/templates"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/traffic"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/format"
 
 	// Trigger format plugin registration via init().
@@ -84,6 +88,14 @@ func main() {
 
 	// Start periodic history cleanup goroutine.
 	cleanup.Start(context.Background(), database)
+
+	// Start traffic reporter (polls mihomo external-controller for per-source traffic).
+	mihomoURL := os.Getenv("MIHOMO_API_URL")
+	mihomoSecret := os.Getenv("MIHOMO_API_SECRET")
+	if mihomoURL != "" {
+		trafficReporter := traffic.New(mihomoURL, mihomoSecret, database)
+		go trafficReporter.Run(context.Background())
+	}
 
 	sponsorSvc := sponsor.NewService(database)
 
@@ -146,6 +158,69 @@ func main() {
 	// Health probe — always returns 200, no auth required.
 	engine.GET("/health", func(c *gin.Context) {
 		c.Status(http.StatusOK)
+	})
+
+	// Traffic stats endpoint — returns per-source traffic aggregated from mihomo.
+	engine.GET("/api/v1/traffic/stats", func(c *gin.Context) {
+		var stats []model.SourceTrafficStat
+		if err := database.WithContext(c.Request.Context()).
+			Order("recorded_at DESC").
+			Find(&stats).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+			return
+		}
+
+		// Join with sources for identifier and priority.
+		type trafficItem struct {
+			SourceID   string `json:"source_id"`
+			Identifier string `json:"identifier"`
+			Priority   int    `json:"priority"`
+			Upload     int64  `json:"upload"`
+			Download   int64  `json:"download"`
+			RecordedAt string `json:"recorded_at"`
+		}
+
+		var sources []model.Source
+		if len(stats) > 0 {
+			sourceIDs := make([]uuid.UUID, len(stats))
+			for i, s := range stats {
+				sourceIDs[i] = s.SourceID
+			}
+			database.WithContext(c.Request.Context()).Where("id IN ?", sourceIDs).Find(&sources)
+		}
+
+		sourceMap := make(map[uuid.UUID]model.Source)
+		for _, s := range sources {
+			sourceMap[s.ID] = s
+		}
+
+		items := make([]trafficItem, len(stats))
+		var totalUp, totalDown int64
+		for i, s := range stats {
+			src := sourceMap[s.SourceID]
+			items[i] = trafficItem{
+				SourceID:   s.SourceID.String(),
+				Identifier: src.Identifier,
+				Priority:   src.Priority,
+				Upload:     s.Upload,
+				Download:   s.Download,
+				RecordedAt: s.RecordedAt.Format(time.RFC3339),
+			}
+			totalUp += s.Upload
+			totalDown += s.Download
+		}
+
+		var recordedAt string
+		if len(stats) > 0 {
+			recordedAt = stats[0].RecordedAt.Format(time.RFC3339)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"sources":        items,
+			"total_upload":   totalUp,
+			"total_download": totalDown,
+			"recorded_at":    recordedAt,
+		})
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

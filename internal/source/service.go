@@ -118,8 +118,8 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*model.Source, error) 
 	return &src, nil
 }
 
-// Update updates a source's identifier and/or info.
-func (s *Service) Update(ctx context.Context, id uuid.UUID, identifier, info, content *string) (*model.Source, error) {
+// Update updates a source's identifier, info, content and/or priority.
+func (s *Service) Update(ctx context.Context, id uuid.UUID, identifier, info, content *string, priority *int) (*model.Source, error) {
 	if _, err := s.Get(ctx, id); err != nil {
 		return nil, err
 	}
@@ -133,10 +133,33 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, identifier, info, co
 	if content != nil {
 		updates["content"] = *content
 	}
+	if priority != nil {
+		p := *priority
+		if p < 0 {
+			p = 0
+		}
+		if p > 9 {
+			p = 9
+		}
+		updates["priority"] = p
+	}
 	if err := s.db.WithContext(ctx).Model(&model.Source{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, id)
+}
+
+// UpdateUsage stores subscription quota info from the subscription-userinfo header.
+func (s *Service) UpdateUsage(ctx context.Context, id uuid.UUID, upload, download, total, expire int64) error {
+	return s.db.WithContext(ctx).Model(&model.Source{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"upload":     upload,
+			"download":   download,
+			"total":      total,
+			"expire":     expire,
+			"updated_at": time.Now(),
+		}).Error
 }
 
 // Delete deletes a source, its fetch histories, and calls the cleanup port.

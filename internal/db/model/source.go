@@ -15,8 +15,18 @@ type Source struct {
 	Content    string    `gorm:"not null"`                // URL for subscribe, raw text for node
 	Status     string    `gorm:"not null;default:active"` // "active" | "dead"
 	IgnoreDead bool      `gorm:"not null;default:false"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+
+	// 优先级：0=公益, 1=机场/付费, 2=最高
+	Priority int `gorm:"not null;default:0"`
+
+	// 额度信息（来自订阅 HTTP 响应头的 subscription-userinfo）
+	Upload   int64 `gorm:"not null;default:0"` // 累计上传字节
+	Download int64 `gorm:"not null;default:0"` // 累计下载字节
+	Total    int64 `gorm:"not null;default:0"` // 总量字节
+	Expire   int64 `gorm:"not null;default:0"` // 到期 unix timestamp, 0=无
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // SourceFetchHistory records each fetch attempt for a subscribe-type source.
