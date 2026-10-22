@@ -616,6 +616,7 @@ docker compose logs core | grep "rebuild complete"
 | [分发](docs/distribution.md) | 订阅地址、查询参数、地区策略与选节点算法 |
 | [订阅模板](docs/templates.md) | 分发时的订阅模板配置与制作方法 |
 | [配置与 API](docs/configuration-and-api.md) | 启动配置、动态参数、筛选引擎、命名与 Sponsor、API 权限 |
+| [自动化路线](docs/automation-roadmap.md) | 哪些自动、哪些手动，以及未来可做的自动化方向 |
 
 ## 致谢与来源
 
