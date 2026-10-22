@@ -83,7 +83,7 @@ const sourceHeaders = [
       </div>
     </div>
 
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-tabs v-model="activeTab" color="primary" density="comfortable">
         <v-tab value="node" prepend-icon="mdi-server-network">节点</v-tab>
         <v-tab value="source" prepend-icon="mdi-link-variant">来源</v-tab>
@@ -112,7 +112,7 @@ const sourceHeaders = [
                   <span class="text-subtitle-2">匹配结果</span>
                   <v-chip size="small" variant="tonal" color="primary">{{ nodeResults.length }}</v-chip>
                 </div>
-                <v-card variant="outlined" rounded="lg">
+                <v-card variant="outlined" rounded="xl">
                   <v-data-table
                     :headers="nodeHeaders"
                     :items="nodeResults"
@@ -160,7 +160,7 @@ const sourceHeaders = [
                   <span class="text-subtitle-2">匹配结果</span>
                   <v-chip size="small" variant="tonal" color="primary">{{ sourceResults.length }}</v-chip>
                 </div>
-                <v-card variant="outlined" rounded="lg">
+                <v-card variant="outlined" rounded="xl">
                   <v-data-table
                     :headers="sourceHeaders"
                     :items="sourceResults"
@@ -197,12 +197,15 @@ const sourceHeaders = [
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 </style>

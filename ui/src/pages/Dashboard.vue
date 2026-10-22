@@ -24,16 +24,41 @@ const copiedKey = ref<string | null>(null)
 
 const BASE = (import.meta.env.VITE_API_BASE as string) || ''
 const subscriptions = [
-  { key: 'clash', label: 'Clash', url: `${BASE}/clash`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full', color: 'primary' },
-  { key: 'singbox', label: 'Sing-box', url: `${BASE}/singbox`, desc: 'Sing-box JSON', icon: 'mdi-cube-outline', color: 'info' },
-  { key: 'base64', label: 'Base64', url: `${BASE}/base64`, desc: '通用 Base64 订阅', icon: 'mdi-code-braces', color: 'secondary' },
+  { key: 'clash', label: 'Clash', url: `${BASE}/clash`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full' },
+  { key: 'singbox', label: 'Sing-box', url: `${BASE}/singbox`, desc: 'Sing-box JSON', icon: 'mdi-cube-outline' },
+  { key: 'base64', label: 'Base64', url: `${BASE}/base64`, desc: '通用 Base64 订阅', icon: 'mdi-code-braces' },
 ]
 
-const overviewCards = computed(() => [
-  { title: '节点总数', value: stats.value.totalNodes, icon: 'mdi-server-network', color: 'primary' },
-  { title: '存活节点', value: stats.value.aliveNodes, icon: 'mdi-heart-pulse', color: 'success' },
-  { title: '来源总数', value: stats.value.totalSources, icon: 'mdi-link-variant', color: 'info' },
-  { title: '死亡来源', value: stats.value.deadSources, icon: 'mdi-link-variant-off', color: 'error' },
+// MD3：使用不同容器色阶区分，而不是四种高饱和糖果色
+const overview = computed(() => [
+  {
+    title: '节点总数',
+    value: stats.value.totalNodes,
+    icon: 'mdi-server-network',
+    container: 'primary-container',
+    onContainer: 'on-primary-container',
+  },
+  {
+    title: '存活节点',
+    value: stats.value.aliveNodes,
+    icon: 'mdi-heart-pulse',
+    container: 'success-container',
+    onContainer: 'success',
+  },
+  {
+    title: '来源总数',
+    value: stats.value.totalSources,
+    icon: 'mdi-link-variant',
+    container: 'tertiary-container',
+    onContainer: 'on-tertiary-container',
+  },
+  {
+    title: '死亡来源',
+    value: stats.value.deadSources,
+    icon: 'mdi-link-variant-off',
+    container: 'surface-container-high',
+    onContainer: 'on-surface-variant',
+  },
 ])
 
 const aliveRatio = computed(() => {
@@ -42,7 +67,10 @@ const aliveRatio = computed(() => {
   return t > 0 ? Math.round((a / t) * 100) : 0
 })
 
-// 流量占比：机场（priority>=1）vs 公益（priority==0）
+const ratioColor = computed(() =>
+  aliveRatio.value >= 50 ? 'success' : aliveRatio.value >= 20 ? 'warning' : 'error',
+)
+
 const trafficSplit = computed(() => {
   const list = traffic.value?.sources || []
   let airport = 0
@@ -68,7 +96,7 @@ async function copyUrl(key: string, url: string) {
     copiedKey.value = key
     setTimeout(() => (copiedKey.value = null), 1600)
   } catch {
-    /* 剪贴板不可用（非 HTTPS）时静默 */
+    /* ignore */
   }
 }
 
@@ -105,174 +133,169 @@ onMounted(() => {
 
 <template>
   <div>
+    <!-- 页头 -->
     <div class="page-head">
       <div>
-        <h1 class="page-title">仪表盘</h1>
-        <p class="page-sub">节点池健康度与订阅分发概览</p>
+        <h1 class="md3-headline-small page-title">仪表盘</h1>
+        <p class="md3-body-medium page-sub">节点池健康度与订阅分发概览</p>
       </div>
       <v-btn
         icon="mdi-refresh"
         variant="tonal"
-        color="primary"
         :loading="loading"
         @click="fetchStats(); fetchTraffic()"
       />
     </div>
 
-    <!-- 概览卡片 -->
-    <v-row dense>
-      <v-col v-for="c in overviewCards" :key="c.title" cols="12" sm="6" lg="3">
-        <v-card class="stat-card" :color="c.color" variant="tonal" rounded="lg">
-          <v-card-text class="d-flex align-center">
-            <v-icon :icon="c.icon" size="40" class="mr-4 opacity-70" />
-            <div>
-              <div class="stat-title">{{ c.title }}</div>
-              <div class="stat-value">
-                {{ loading ? '—' : (c.value ?? '—') }}
+    <!-- 概览：MD3 容器色块 -->
+    <div class="overview-grid">
+      <v-card
+        v-for="c in overview"
+        :key="c.title"
+        class="overview-card"
+        :class="`bg-${c.container}`"
+        flat
+        rounded="xl"
+      >
+        <div class="overview-inner">
+          <v-icon :icon="c.icon" size="28" :color="c.onContainer" class="overview-icon" />
+          <div>
+            <div class="overview-label md3-label-medium" :style="{ color: `rgb(var(--v-theme-${c.onContainer}))`, opacity: 0.85 }">
+              {{ c.title }}
+            </div>
+            <div class="overview-value md3-headline-large" :style="{ color: `rgb(var(--v-theme-${c.onContainer}))` }">
+              {{ loading ? '—' : (c.value ?? '—') }}
+            </div>
+          </div>
+        </div>
+      </v-card>
+    </div>
+
+    <!-- 健康度 + 流量 -->
+    <div class="detail-grid">
+      <v-card rounded="xl" flat class="bg-surface-container-low">
+        <div class="card-head">
+          <v-icon icon="mdi-chart-donut" size="20" class="mr-2" color="on-surface-variant" />
+          <span class="md3-title-medium">节点存活率</span>
+        </div>
+        <div class="ring-wrap">
+          <v-progress-circular
+            :model-value="aliveRatio"
+            :size="140"
+            :width="16"
+            :color="ratioColor"
+            bg-color="surface-container-high"
+          >
+            <div class="ring-num md3-headline-medium">{{ aliveRatio }}%</div>
+          </v-progress-circular>
+          <div class="ring-caption md3-body-small">
+            {{ stats.aliveNodes ?? 0 }} / {{ stats.totalNodes ?? 0 }} 个节点存活
+          </div>
+        </div>
+      </v-card>
+
+      <v-card rounded="xl" flat class="bg-surface-container-low">
+        <div class="card-head">
+          <v-icon icon="mdi-swap-vertical-bold" size="20" class="mr-2" color="on-surface-variant" />
+          <span class="md3-title-medium">实际流量统计</span>
+          <v-spacer />
+          <v-chip size="small" variant="tonal" color="on-surface-variant" class="md3-label-small">
+            来自 NAS mihomo
+          </v-chip>
+        </div>
+
+        <div class="card-body">
+          <template v-if="trafficLoading">
+            <v-skeleton-loader type="list-item-two-line" />
+          </template>
+
+          <template v-else-if="trafficSplit.hasData">
+            <!-- MD3 分段条 -->
+            <div class="split-bar">
+              <div class="split-seg split-airport" :style="{ width: trafficSplit.airportPct + '%' }" />
+              <div class="split-seg split-free" :style="{ width: trafficSplit.freePct + '%' }" />
+            </div>
+
+            <div class="split-legend">
+              <div class="legend-item">
+                <span class="dot dot-airport" />
+                <div>
+                  <div class="md3-label-medium legend-name">机场节点</div>
+                  <div class="md3-title-large legend-val">{{ formatBytes(trafficSplit.airport) }}</div>
+                  <div class="md3-body-small legend-pct">{{ trafficSplit.airportPct }}%</div>
+                </div>
+              </div>
+              <div class="legend-item">
+                <span class="dot dot-free" />
+                <div>
+                  <div class="md3-label-medium legend-name">公益节点</div>
+                  <div class="md3-title-large legend-val">{{ formatBytes(trafficSplit.free) }}</div>
+                  <div class="md3-body-small legend-pct">{{ trafficSplit.freePct }}%</div>
+                </div>
               </div>
             </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
 
-    <!-- 健康度 + 流量统计 -->
-    <v-row dense class="mt-1">
-      <v-col cols="12" md="5">
-        <v-card rounded="lg" class="h-100">
-          <v-card-title class="text-subtitle-1">
-            <v-icon icon="mdi-chart-donut" class="mr-2" size="20" />
-            节点存活率
-          </v-card-title>
-          <v-card-text>
-            <div class="d-flex align-center justify-center py-3">
-              <v-progress-circular
-                :model-value="aliveRatio"
-                :size="130"
-                :width="14"
-                :color="aliveRatio >= 50 ? 'success' : aliveRatio >= 20 ? 'warning' : 'error'"
-              >
-                <span class="text-h5 font-weight-bold">{{ aliveRatio }}%</span>
-              </v-progress-circular>
+            <v-divider class="my-3" />
+            <div class="total-row md3-body-medium">
+              <span class="total-label">合计</span>
+              <span class="total-val">
+                上传 {{ formatBytes(traffic.total_upload) }} · 下载 {{ formatBytes(traffic.total_download) }}
+              </span>
             </div>
-            <div class="text-center text-caption opacity-70">
-              {{ stats.aliveNodes ?? 0 }} / {{ stats.totalNodes ?? 0 }} 个节点存活
+
+            <div class="hint md3-body-small">
+              仅统计经过 NAS mihomo 的流量。若手机等设备直连节点（订阅模式），这部分流量不计入。
             </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
+          </template>
 
-      <v-col cols="12" md="7">
-        <v-card rounded="lg" class="h-100">
-          <v-card-title class="text-subtitle-1 d-flex align-center">
-            <v-icon icon="mdi-swap-vertical-bold" class="mr-2" size="20" />
-            实际流量统计
-            <v-spacer />
-            <v-chip size="small" variant="tonal" color="default">
-              来自 NAS mihomo
-            </v-chip>
-          </v-card-title>
-
-          <v-card-text>
-            <v-skeleton-loader v-if="trafficLoading" type="list-item-two-line" />
-
-            <template v-else-if="trafficSplit.hasData">
-              <!-- 比例条 -->
-              <div class="split-bar mb-3">
-                <div
-                  class="split-bar__seg split-bar__airport"
-                  :style="{ width: trafficSplit.airportPct + '%' }"
-                />
-                <div
-                  class="split-bar__seg split-bar__free"
-                  :style="{ width: trafficSplit.freePct + '%' }"
-                />
-              </div>
-
-              <v-row dense class="mb-2">
-                <v-col cols="6">
-                  <div class="legend">
-                    <span class="legend-dot legend-dot--airport" />
-                    机场（高优先级）
-                    <div class="legend-val">{{ formatBytes(trafficSplit.airport) }}</div>
-                    <div class="text-caption opacity-70">{{ trafficSplit.airportPct }}%</div>
-                  </div>
-                </v-col>
-                <v-col cols="6">
-                  <div class="legend">
-                    <span class="legend-dot legend-dot--free" />
-                    公益节点
-                    <div class="legend-val">{{ formatBytes(trafficSplit.free) }}</div>
-                    <div class="text-caption opacity-70">{{ trafficSplit.freePct }}%</div>
-                  </div>
-                </v-col>
-              </v-row>
-
-              <v-divider class="my-3" />
-              <div class="d-flex justify-space-between text-body-2">
-                <span class="opacity-70">合计</span>
-                <span class="font-weight-medium">
-                  上传 {{ formatBytes(traffic.total_upload) }} ·
-                  下载 {{ formatBytes(traffic.total_download) }}
-                </span>
-              </div>
-
-              <v-alert
-                type="info"
-                variant="tonal"
-                density="compact"
-                class="mt-3 text-caption"
-              >
-                仅统计经过 NAS mihomo 的流量。若手机等设备直连节点（订阅模式），这部分流量不计入。
-              </v-alert>
-            </template>
-
-            <v-alert
-              v-else
-              type="warning"
-              variant="tonal"
-              density="compact"
-              class="text-caption"
-            >
-              暂无流量数据。需要设备把 NAS mihomo（端口 7890）作为代理，流量才会被统计。
-            </v-alert>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+          <div v-else-if="!trafficLoading" class="empty-state">
+            <v-icon icon="mdi-chart-timeline-variant-shimmer" size="40" class="mb-2" color="on-surface-variant" />
+            <div class="md3-body-medium empty-text">暂无流量数据</div>
+            <div class="md3-body-small empty-sub">
+              需要设备把 NAS mihomo（端口 7890）作为代理，流量才会被统计
+            </div>
+          </div>
+        </div>
+      </v-card>
+    </div>
 
     <!-- 订阅链接 -->
-    <v-card rounded="lg" class="mt-4">
-      <v-card-title class="text-subtitle-1">
-        <v-icon icon="mdi-link-variant" class="mr-2" size="20" />
-        订阅链接
-      </v-card-title>
-      <v-card-text>
-        <v-row dense>
-          <v-col v-for="sub in subscriptions" :key="sub.key" cols="12" md="4">
-            <v-card variant="outlined" rounded="lg" class="sub-card h-100">
-              <v-card-text>
-                <div class="d-flex align-center mb-2">
-                  <v-icon :icon="sub.icon" :color="sub.color" class="mr-2" />
-                  <span class="font-weight-bold">{{ sub.label }}</span>
-                  <v-chip size="x-small" variant="tonal" class="ml-2">{{ sub.desc }}</v-chip>
-                </div>
-                <div class="sub-url mono mb-3">{{ sub.url }}</div>
-                <v-btn
-                  block
-                  variant="tonal"
-                  :color="sub.color"
-                  size="small"
-                  :prepend-icon="copiedKey === sub.key ? 'mdi-check' : 'mdi-content-copy'"
-                  @click="copyUrl(sub.key, sub.url)"
-                >
-                  {{ copiedKey === sub.key ? '已复制' : '复制链接' }}
-                </v-btn>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-      </v-card-text>
+    <v-card rounded="xl" flat class="bg-surface-container-low mt-4">
+      <div class="card-head">
+        <v-icon icon="mdi-link-variant" size="20" class="mr-2" color="on-surface-variant" />
+        <span class="md3-title-medium">订阅链接</span>
+      </div>
+      <div class="card-body">
+        <div class="sub-grid">
+          <v-card
+            v-for="sub in subscriptions"
+            :key="sub.key"
+            variant="flat"
+            rounded="lg"
+            class="sub-card bg-surface-container-lowest"
+          >
+            <div class="sub-inner">
+              <div class="sub-top">
+                <v-icon :icon="sub.icon" size="20" color="primary" />
+                <span class="md3-title-small sub-name">{{ sub.label }}</span>
+              </div>
+              <div class="md3-body-small sub-desc">{{ sub.desc }}</div>
+              <div class="mono sub-url">{{ sub.url }}</div>
+              <v-btn
+                block
+                variant="flat"
+                color="primary"
+                size="small"
+                :prepend-icon="copiedKey === sub.key ? 'mdi-check' : 'mdi-content-copy'"
+                class="mt-3"
+                @click="copyUrl(sub.key, sub.url)"
+              >
+                {{ copiedKey === sub.key ? '已复制' : '复制链接' }}
+              </v-btn>
+            </div>
+          </v-card>
+        </div>
+      </div>
     </v-card>
   </div>
 </template>
@@ -282,78 +305,206 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+  gap: 12px;
 }
 .page-title {
-  font-size: 24px;
-  font-weight: 700;
   margin: 0;
+  font-weight: 400;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 
-.stat-card {
+/* ── 概览卡片 ── */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.overview-card {
   transition: transform 0.15s ease;
 }
-.stat-card:hover {
+.overview-card:hover {
   transform: translateY(-2px);
 }
-.stat-title {
-  font-size: 13px;
-  opacity: 0.75;
+.overview-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
 }
-.stat-value {
-  font-size: 30px;
-  font-weight: 700;
+.overview-icon {
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+.overview-label {
+  margin-bottom: 2px;
+}
+.overview-value {
+  font-weight: 500;
   line-height: 1.1;
 }
 
+/* ── 详情两列 ── */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+@media (max-width: 960px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  padding: 20px 20px 0;
+  color: rgb(var(--v-theme-on-surface));
+}
+.card-body {
+  padding: 16px 20px 20px;
+}
+
+/* ── 存活率环 ── */
+.ring-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 20px 28px;
+}
+.ring-num {
+  font-weight: 500;
+  color: rgb(var(--v-theme-on-surface));
+}
+.ring-caption {
+  margin-top: 14px;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ── 流量分段条 ── */
 .split-bar {
   display: flex;
-  height: 18px;
-  border-radius: 9px;
+  height: 12px;
+  border-radius: 6px;
   overflow: hidden;
-  background: rgba(var(--v-border-color), 0.12);
+  background: rgb(var(--v-theme-surface-container-high));
 }
-.split-bar__seg {
+.split-seg {
   transition: width 0.4s ease;
 }
-.split-bar__airport {
+.split-airport {
   background: rgb(var(--v-theme-primary));
 }
-.split-bar__free {
-  background: rgb(var(--v-theme-success));
+.split-free {
+  background: rgb(var(--v-theme-tertiary));
 }
 
-.legend {
-  font-size: 13px;
+.split-legend {
+  display: flex;
+  gap: 32px;
+  margin-top: 20px;
 }
-.legend-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
+.legend-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.dot {
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  margin-right: 6px;
+  margin-top: 4px;
+  flex-shrink: 0;
 }
-.legend-dot--airport {
+.dot-airport {
   background: rgb(var(--v-theme-primary));
 }
-.legend-dot--free {
-  background: rgb(var(--v-theme-success));
+.dot-free {
+  background: rgb(var(--v-theme-tertiary));
+}
+.legend-name {
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 .legend-val {
-  font-size: 20px;
-  font-weight: 700;
-  margin-top: 4px;
+  font-weight: 500;
+  color: rgb(var(--v-theme-on-surface));
+  line-height: 1.2;
+}
+.legend-pct {
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 
+.total-row {
+  display: flex;
+  justify-content: space-between;
+  color: rgb(var(--v-theme-on-surface));
+}
+.total-label {
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+.total-val {
+  font-weight: 500;
+}
+.hint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface-container));
+  color: rgb(var(--v-theme-on-surface-variant));
+  line-height: 1.5;
+}
+
+/* ── 空状态 ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 12px;
+  text-align: center;
+}
+.empty-text {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 500;
+}
+.empty-sub {
+  margin-top: 4px;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ── 订阅卡 ── */
+.sub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.sub-card {
+  border: 1px solid rgb(var(--v-theme-outline-variant));
+}
+.sub-inner {
+  padding: 16px;
+}
+.sub-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sub-name {
+  color: rgb(var(--v-theme-on-surface));
+}
+.sub-desc {
+  color: rgb(var(--v-theme-on-surface-variant));
+  margin-bottom: 8px;
+}
 .sub-url {
-  font-size: 12px;
-  opacity: 0.75;
+  color: rgb(var(--v-theme-primary));
   word-break: break-all;
   line-height: 1.5;
+  font-size: 12px;
 }
 </style>

@@ -114,7 +114,7 @@ onMounted(() => loadTab('clash'))
       </div>
     </div>
 
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" @update:model-value="onTabChange">
         <v-tab v-for="fmt in formats" :key="fmt" :value="fmt" :prepend-icon="formatIcons[fmt]">
           {{ formatLabels[fmt] }}
@@ -204,13 +204,16 @@ onMounted(() => loadTab('clash'))
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 .mono :deep(textarea) {
   font-family: ui-monospace, Consolas, monospace;

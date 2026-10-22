@@ -163,7 +163,7 @@ onMounted(async () => {
 
     <!-- 过滤器 -->
     <v-expand-transition>
-      <v-card v-show="filtersOpen" rounded="lg" class="mb-4">
+      <v-card flat v-show="filtersOpen" rounded="xl" class="mb-4">
         <v-card-text>
           <v-row dense>
             <v-col cols="6" sm="4" md="2">
@@ -248,7 +248,7 @@ onMounted(async () => {
     </v-expand-transition>
 
     <!-- 表格 -->
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-data-table
         :headers="headers"
         :items="tableData"
@@ -381,13 +381,16 @@ onMounted(async () => {
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 .lh-tight {
   line-height: 1.5;

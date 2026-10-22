@@ -96,7 +96,7 @@ onMounted(() => loadFetchLogs(1))
       <h1 class="page-title">日志</h1>
     </div>
 
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" @update:model-value="onTabChange">
         <v-tab value="fetch" prepend-icon="mdi-download-network">抓取日志</v-tab>
         <v-tab value="check" prepend-icon="mdi-heart-pulse">检测日志</v-tab>
@@ -247,8 +247,10 @@ onMounted(() => loadFetchLogs(1))
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .filter-input {
   max-width: 320px;

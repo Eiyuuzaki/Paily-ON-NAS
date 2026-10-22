@@ -133,7 +133,7 @@ onMounted(fetchSponsors)
       <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">新建赞助商</v-btn>
     </div>
 
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-data-table :headers="headers" :items="tableData" :loading="loading" item-value="id" hide-default-footer>
         <template #item.filter_expr="{ item }">
           <code class="mono text-caption">{{ item.filter_expr.length > 60 ? item.filter_expr.slice(0, 60) + '…' : item.filter_expr }}</code>
@@ -162,7 +162,7 @@ onMounted(fetchSponsors)
 
     <!-- 新建 / 编辑 -->
     <v-dialog v-model="dialogVisible" max-width="640" scrollable>
-      <v-card rounded="lg">
+      <v-card flat rounded="xl" class="bg-surface-container-low">
         <v-card-title>{{ isEditing ? '编辑赞助商' : '新建赞助商' }}</v-card-title>
         <v-card-text>
           <v-text-field v-model="form.name" label="名称" class="mb-2" />
@@ -184,7 +184,7 @@ onMounted(fetchSponsors)
 
     <!-- 预览 -->
     <v-dialog v-model="previewVisible" max-width="720" scrollable>
-      <v-card rounded="lg">
+      <v-card flat rounded="xl" class="bg-surface-container-low">
         <v-card-title class="d-flex align-center">
           预览匹配节点
           <v-chip size="small" variant="tonal" class="ml-2">{{ previewNodes.length }}</v-chip>
@@ -227,12 +227,15 @@ onMounted(fetchSponsors)
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 </style>

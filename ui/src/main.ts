@@ -7,6 +7,7 @@ import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import { mdiIcons } from './plugins/mdi-svg'
+import { md3Light, md3Dark } from './plugins/md3-theme'
 
 // ── 自定义 MDI SVG 图标集 ────────────────────────────────────────────────
 // 用按需导入的 SVG path 代替 3.5MB 的 @mdi/font 字体，构建产物小得多。
@@ -23,6 +24,8 @@ const mdiSvgSet = {
 }
 
 // ── Material Design 3 主题 ────────────────────────────────────────────────
+// 启用 MD3 组件默认值（药丸按钮、分割式进度条、outlined 输入框等），
+// 再叠加自定义的 tonal 色阶色板。
 const vuetify = createVuetify({
   icons: {
     defaultSet: 'mdi-svg',
@@ -33,47 +36,36 @@ const vuetify = createVuetify({
   theme: {
     defaultTheme: localStorage.getItem('paily_theme') || 'light',
     themes: {
-      light: {
-        dark: false,
-        colors: {
-          primary: '#6656d8',
-          'primary-darken-1': '#4f3fc4',
-          secondary: '#5c6bc0',
-          accent: '#7c4dff',
-          error: '#b00020',
-          info: '#0288d1',
-          success: '#2e7d32',
-          warning: '#ed6c02',
-          background: '#f5f5f7',
-          surface: '#ffffff',
-        },
-      },
-      dark: {
-        dark: true,
-        colors: {
-          primary: '#b39dff',
-          'primary-darken-1': '#8f7ae8',
-          secondary: '#8c9eff',
-          accent: '#b388ff',
-          error: '#ff5252',
-          info: '#40c4ff',
-          success: '#69f0ae',
-          warning: '#ffab40',
-          background: '#121218',
-          surface: '#1e1e26',
-        },
-      },
+      light: md3Light,
+      dark: md3Dark,
     },
   },
   defaults: {
-    VCard: { rounded: 'lg' },
-    VBtn: { rounded: 'lg' },
-    VTextField: { variant: 'outlined', density: 'comfortable' },
-    VSelect: { variant: 'outlined', density: 'comfortable' },
-    VAutocomplete: { variant: 'outlined', density: 'comfortable' },
-    VTextarea: { variant: 'outlined' },
+    // MD3 组件规范
+    global: {
+      ripple: true,
+    },
+    VAppBar: { flat: true },
+    VCard: { rounded: 'xl' },
+    VBtn: { rounded: 'xl', style: 'text-transform: none; letter-spacing: 0.1px;' },
+    VChip: { rounded: 'sm' },
+    VTextField: { variant: 'outlined', density: 'comfortable', rounded: 'sm' },
+    VSelect: { variant: 'outlined', density: 'comfortable', rounded: 'sm' },
+    VAutocomplete: { variant: 'outlined', density: 'comfortable', rounded: 'sm' },
+    VTextarea: { variant: 'outlined', rounded: 'sm' },
+    VNumberInput: { variant: 'outlined', rounded: 'sm' },
     VDataTable: { density: 'comfortable' },
-    VChip: { rounded: 'lg' },
+    VList: { prependGap: 16 },
+    VListItem: { rounded: 'xl' },
+    VProgressCircular: { rounded: true },
+    VProgressLinear: { rounded: true, roundedBar: true },
+    VTab: { rounded: 0 },
+    VTabs: { color: 'primary', sliderVariant: 'primary' },
+    VSwitch: { indentDetails: true },
+    VSlider: { color: 'primary', indentDetails: true },
+    VDialog: { scrim: 'rgba(0,0,0,0.4)' },
+    VSnackbar: { rounded: 'lg' },
+    VNavigationDrawer: {},
   },
 })
 

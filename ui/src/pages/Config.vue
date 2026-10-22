@@ -154,7 +154,7 @@ onMounted(loadConfig)
       </div>
     </div>
 
-    <v-card rounded="lg" class="mb-4">
+    <v-card flat rounded="xl" class="mb-4">
       <v-card-text class="pb-0">
         <v-text-field
           v-model="search"
@@ -168,7 +168,7 @@ onMounted(loadConfig)
       </v-card-text>
     </v-card>
 
-    <v-card rounded="lg" :loading="loading">
+    <v-card flat rounded="xl" :loading="loading">
       <v-card-text>
         <v-row dense>
           <v-col v-for="key in normalKeys" :key="key" cols="12" md="6" lg="4">
@@ -246,12 +246,15 @@ onMounted(loadConfig)
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 </style>

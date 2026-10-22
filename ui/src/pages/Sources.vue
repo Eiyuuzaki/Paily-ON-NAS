@@ -293,7 +293,7 @@ onMounted(fetchSources)
 
     <!-- 过滤器 -->
     <v-expand-transition>
-      <v-card v-show="filtersOpen" rounded="lg" class="mb-4">
+      <v-card flat v-show="filtersOpen" rounded="xl" class="mb-4">
         <v-card-text>
           <v-row dense>
             <v-col cols="6" sm="4" md="2">
@@ -359,7 +359,7 @@ onMounted(fetchSources)
     </v-expand-transition>
 
     <!-- 表格 -->
-    <v-card rounded="lg">
+    <v-card flat rounded="xl" class="bg-surface-container-low">
       <v-data-table
         :headers="headers"
         :items="tableData"
@@ -480,7 +480,7 @@ onMounted(fetchSources)
 
     <!-- 新建对话框 -->
     <v-dialog v-model="createDialogVisible" max-width="620" scrollable>
-      <v-card rounded="lg">
+      <v-card flat rounded="xl" class="bg-surface-container-low">
         <v-card-title>新建来源</v-card-title>
         <v-card-text>
           <v-select
@@ -539,7 +539,7 @@ onMounted(fetchSources)
 
     <!-- 编辑对话框 -->
     <v-dialog v-model="editDialogVisible" max-width="620" scrollable>
-      <v-card rounded="lg">
+      <v-card flat rounded="xl" class="bg-surface-container-low">
         <v-card-title>编辑来源</v-card-title>
         <v-card-text>
           <v-row dense>
@@ -599,13 +599,16 @@ onMounted(fetchSources)
 }
 .page-title {
   font-size: 24px;
-  font-weight: 700;
+  line-height: 32px;
+  font-weight: 400;
   margin: 0;
+  color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
-  font-size: 13px;
-  opacity: 0.6;
-  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  margin: 4px 0 0;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 .priority-chip {
   cursor: pointer;
