@@ -105,19 +105,19 @@ async function handlePreview() {
 }
 
 const headers = [
-  { title: '名称', key: 'name', width: 130 },
+  { title: '名称', key: 'name', minWidth: 130 },
   { title: '文本', key: 'text', minWidth: 120 },
   { title: '过滤表达式', key: 'filter_expr', minWidth: 220, sortable: false },
-  { title: '优先级', key: 'priority', width: 100 },
-  { title: '操作', key: 'actions', width: 120, sortable: false, align: 'end' as const },
+  { title: '优先级', key: 'priority', minWidth: 100 },
+  { title: '操作', key: 'actions', minWidth: 120, sortable: false, align: 'end' as const },
 ]
 
 const previewHeaders = [
-  { title: '协议', key: 'protocol', width: 90 },
+  { title: '协议', key: 'protocol', minWidth: 90 },
   { title: '服务器', key: 'server', minWidth: 160 },
-  { title: '区域', key: 'region', width: 70 },
-  { title: '存活', key: 'alive', width: 80 },
-  { title: '分数', key: 'score', width: 120, sortable: false },
+  { title: '区域', key: 'region', minWidth: 70 },
+  { title: '存活', key: 'alive', minWidth: 80 },
+  { title: '分数', key: 'score', minWidth: 120, sortable: false },
 ]
 
 onMounted(fetchSponsors)

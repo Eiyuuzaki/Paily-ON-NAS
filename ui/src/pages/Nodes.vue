@@ -121,15 +121,15 @@ function openDetail(node: NodeSummary) {
 
 // ── 表格列（Vuetify data-table 用 headers 定义）─────────────────────────
 const headers = [
-  { title: 'ID', key: 'id', width: 110, sortable: false },
-  { title: '协议', key: 'protocol', width: 90 },
+  { title: 'ID', key: 'id', minWidth: 110, sortable: false },
+  { title: '协议', key: 'protocol', minWidth: 90 },
   { title: '服务器', key: 'server', minWidth: 200 },
   { title: '来源', key: 'sources', minWidth: 140, sortable: false },
-  { title: '区域', key: 'region', width: 80 },
-  { title: '延迟', key: 'latency', width: 140, sortable: false },
-  { title: '分数', key: 'score', width: 170 },
-  { title: '状态', key: 'alive', width: 90 },
-  { title: '操作', key: 'actions', width: 130, sortable: false, align: 'end' as const },
+  { title: '区域', key: 'region', minWidth: 80 },
+  { title: '延迟', key: 'latency', minWidth: 140, sortable: false },
+  { title: '分数', key: 'score', minWidth: 170 },
+  { title: '状态', key: 'alive', minWidth: 90 },
+  { title: '操作', key: 'actions', minWidth: 130, sortable: false, align: 'end' as const },
 ]
 
 const scoreColor = (s: number) => (s >= 0.6 ? 'success' : s >= 0.3 ? 'warning' : 'error')

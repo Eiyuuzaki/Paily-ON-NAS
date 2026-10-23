@@ -107,17 +107,17 @@ function close() {
 }
 
 const initialHeaders = [
-  { title: 'ID', key: 'id', width: 64 },
-  { title: 'Checker', key: 'checker_tag', width: 120 },
-  { title: '延迟 (ms)', key: 'latency_ms', width: 110 },
+  { title: 'ID', key: 'id', minWidth: 64 },
+  { title: 'Checker', key: 'checker_tag', minWidth: 120 },
+  { title: '延迟 (ms)', key: 'latency_ms', minWidth: 110 },
   { title: '检测时间', key: 'checked_at', minWidth: 160 },
 ]
 const deepHeaders = [
-  { title: 'ID', key: 'id', width: 64 },
-  { title: 'Checker', key: 'checker_tag', width: 110 },
-  { title: '平均延迟', key: 'avg_latency_ms', width: 95 },
-  { title: '抖动', key: 'jitter_ms', width: 80 },
-  { title: '速度', key: 'speed_kbps', width: 100 },
+  { title: 'ID', key: 'id', minWidth: 64 },
+  { title: 'Checker', key: 'checker_tag', minWidth: 110 },
+  { title: '平均延迟', key: 'avg_latency_ms', minWidth: 95 },
+  { title: '抖动', key: 'jitter_ms', minWidth: 80 },
+  { title: '速度', key: 'speed_kbps', minWidth: 100 },
   { title: '流媒体', key: 'streaming', minWidth: 150, sortable: false },
   { title: '检测时间', key: 'checked_at', minWidth: 160 },
 ]

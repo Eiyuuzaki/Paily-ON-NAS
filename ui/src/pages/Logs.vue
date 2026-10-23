@@ -74,16 +74,16 @@ function onTabChange(tab: unknown) {
 }
 
 const fetchHeaders = [
-  { title: 'ID', key: 'id', width: 70 },
+  { title: 'ID', key: 'id', minWidth: 70 },
   { title: '来源 ID', key: 'source_id', minWidth: 280 },
-  { title: '结果', key: 'success', width: 90 },
-  { title: '节点数', key: 'node_count', width: 90 },
+  { title: '结果', key: 'success', minWidth: 90 },
+  { title: '节点数', key: 'node_count', minWidth: 90 },
   { title: '抓取时间', key: 'fetched_at', minWidth: 170 },
 ]
 const checkHeaders = [
-  { title: 'ID', key: 'id', width: 70 },
+  { title: 'ID', key: 'id', minWidth: 70 },
   { title: '节点 ID', key: 'node_id', minWidth: 280 },
-  { title: '延迟 (ms)', key: 'latency_ms', width: 110 },
+  { title: '延迟 (ms)', key: 'latency_ms', minWidth: 110 },
   { title: '检测时间', key: 'checked_at', minWidth: 170 },
 ]
 

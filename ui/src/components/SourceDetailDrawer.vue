@@ -168,17 +168,17 @@ function close() {
 }
 
 const nodeHeaders = [
-  { title: '协议', key: 'protocol', width: 84 },
+  { title: '协议', key: 'protocol', minWidth: 84 },
   { title: '服务器', key: 'server', minWidth: 150 },
-  { title: '区域', key: 'region', width: 70 },
-  { title: '存活', key: 'alive', width: 80 },
-  { title: '分数', key: 'score', width: 110, sortable: false },
-  { title: '', key: 'actions', width: 64, sortable: false, align: 'end' as const },
+  { title: '区域', key: 'region', minWidth: 70 },
+  { title: '存活', key: 'alive', minWidth: 80 },
+  { title: '分数', key: 'score', minWidth: 110, sortable: false },
+  { title: '', key: 'actions', minWidth: 64, sortable: false, align: 'end' as const },
 ]
 const logHeaders = [
-  { title: 'ID', key: 'id', width: 64 },
-  { title: '结果', key: 'success', width: 90 },
-  { title: '节点数', key: 'node_count', width: 90 },
+  { title: 'ID', key: 'id', minWidth: 64 },
+  { title: '结果', key: 'success', minWidth: 90 },
+  { title: '节点数', key: 'node_count', minWidth: 90 },
   { title: '抓取时间', key: 'fetched_at', minWidth: 160 },
 ]
 </script>

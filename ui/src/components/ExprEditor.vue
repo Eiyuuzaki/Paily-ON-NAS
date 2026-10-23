@@ -53,8 +53,8 @@ const currentFields = computed(() =>
 )
 
 const headers = [
-  { title: '字段', key: 'name', width: 200 },
-  { title: '类型', key: 'type', width: 130 },
+  { title: '字段', key: 'name', minWidth: 200 },
+  { title: '类型', key: 'type', minWidth: 130 },
   { title: '说明', key: 'desc' },
 ]
 </script>

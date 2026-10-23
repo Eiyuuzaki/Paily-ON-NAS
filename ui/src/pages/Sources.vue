@@ -236,16 +236,16 @@ async function submitEdit() {
 
 // ── 表格列 ────────────────────────────────────────────────────────────────
 const headers = [
-  { title: 'ID', key: 'id', width: 96, sortable: false },
-  { title: '类型', key: 'type', width: 76, sortable: false },
+  { title: 'ID', key: 'id', minWidth: 96, sortable: false },
+  { title: '类型', key: 'type', minWidth: 76, sortable: false },
   { title: '标识符', key: 'identifier', minWidth: 160 },
-  { title: '优先级', key: 'priority', width: 116, sortable: false },
-  { title: '额度', key: 'quota', width: 190, sortable: false },
+  { title: '优先级', key: 'priority', minWidth: 116, sortable: false },
+  { title: '额度', key: 'quota', minWidth: 190, sortable: false },
   { title: '内容', key: 'content', minWidth: 160, sortable: false },
-  { title: '存活 / 节点数', key: 'node_count', width: 110, sortable: false },
-  { title: '状态', key: 'status', width: 88, sortable: false },
-  { title: '忽略死亡', key: 'ignore_dead', width: 92, sortable: false },
-  { title: '操作', key: 'actions', width: 120, sortable: false, align: 'end' as const },
+  { title: '存活 / 节点数', key: 'node_count', minWidth: 110, sortable: false },
+  { title: '状态', key: 'status', minWidth: 88, sortable: false },
+  { title: '忽略死亡', key: 'ignore_dead', minWidth: 92, sortable: false },
+  { title: '操作', key: 'actions', minWidth: 120, sortable: false, align: 'end' as const },
 ]
 
 const priorityColor = (p: number) => (p >= 2 ? 'deep-purple' : p === 1 ? 'primary' : 'default')
