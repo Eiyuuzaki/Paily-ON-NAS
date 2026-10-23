@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { getStats } from '../api/stats'
 import { getTrafficStats, type TrafficStatsResponse } from '../api/traffic'
 import { formatBytes } from '../utils/format'
+import TrafficSetupGuide from '../components/TrafficSetupGuide.vue'
+
+// 宽屏用 dialog 承载接入指引（避免展开面板把同 grid 行的卡片拉长），
+// 窄屏是单列布局，用 accordion 就地展开。
+const { mdAndUp } = useDisplay()
+const isWide = computed(() => mdAndUp.value)
+
+const trafficHelpOpen = ref(false)
 
 interface Stats {
   totalNodes: number | null
@@ -89,6 +98,10 @@ const trafficSplit = computed(() => {
     hasData: sum > 0,
   }
 })
+
+// 后端是否配了 MIHOMO_API_URL。用于在空状态下给出正确的排查方向：
+// 没配置要改 .env 重启 core，配了但没数据要把设备代理指过来。
+const trafficConfigured = computed(() => traffic.value?.mihomo_configured ?? false)
 
 async function copyUrl(key: string, url: string) {
   try {
@@ -188,7 +201,7 @@ onMounted(() => {
     <div class="detail-grid">
       <v-card rounded="xl" flat class="bg-surface-container-low">
         <div class="card-head">
-          <v-icon icon="mdi-chart-donut" size="20" class="mr-2" color="on-surface-variant" />
+          <v-icon icon="mdi-chart-donut" size="20" class="mr-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
           <span class="md3-title-medium">节点存活率</span>
         </div>
         <div class="ring-wrap">
@@ -209,10 +222,28 @@ onMounted(() => {
 
       <v-card rounded="xl" flat class="bg-surface-container-low">
         <div class="card-head">
-          <v-icon icon="mdi-swap-vertical-bold" size="20" class="mr-2" color="on-surface-variant" />
+          <v-icon icon="mdi-swap-vertical-bold" size="20" class="mr-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
           <span class="md3-title-medium">实际流量统计</span>
+          <!--
+            宽屏：用图标按钮把接入指引收进 dialog，避免展开面板把卡片撑高、
+            进而把同一 grid 行的"节点存活率"卡一起拉长。
+            窄屏本来就是单列，用下方 accordion 更直接。
+          -->
+          <v-tooltip v-if="isWide" text="为什么没有数据？" location="top">
+            <template #activator="{ props }">
+              <v-btn
+                v-bind="props"
+                icon="mdi-information-outline"
+                variant="text"
+                size="x-small"
+                density="comfortable"
+                class="guide-btn ml-1"
+                @click="trafficHelpOpen = true"
+              />
+            </template>
+          </v-tooltip>
           <v-spacer />
-          <v-chip size="small" variant="tonal" color="on-surface-variant" class="md3-label-small">
+          <v-chip size="small" variant="tonal" style="color: rgb(var(--v-theme-on-surface-variant))" class="md3-label-small">
             来自 NAS mihomo
           </v-chip>
         </div>
@@ -261,11 +292,36 @@ onMounted(() => {
             </div>
           </template>
 
+          <!--
+            无数据时的空状态。
+            宽屏：只保留一行原因说明，详细步骤收进标题栏 ⓘ 打开的 dialog，
+                  卡片高度固定，不会把同行的"节点存活率"卡拉长。
+            窄屏：卡片本来就是单列，用 accordion 就地展开更省事。
+          -->
           <div v-else-if="!trafficLoading" class="empty-state">
-            <v-icon icon="mdi-chart-timeline-variant-shimmer" size="40" class="mb-2" color="on-surface-variant" />
+            <v-icon icon="mdi-chart-timeline-variant-shimmer" size="40" class="mb-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
             <div class="md3-body-medium empty-text">暂无流量数据</div>
             <div class="md3-body-small empty-sub">
-              需要设备把 NAS mihomo（端口 7890）作为代理，流量才会被统计
+              {{ trafficConfigured
+                ? 'traffic reporter 已在运行，但目前没有流量经过 NAS mihomo。'
+                : '未配置 mihomo 接口，traffic reporter 没有启动。' }}
+            </div>
+
+            <!-- 窄屏：就地展开 -->
+            <v-expansion-panels v-if="!isWide" variant="accordion" class="mt-3 text-left">
+              <v-expansion-panel
+                :title="trafficConfigured ? '怎么让流量被统计？' : '如何开启流量统计？'"
+                elevation="0"
+              >
+                <v-expansion-panel-text>
+                  <TrafficSetupGuide :configured="trafficConfigured" />
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+
+            <!-- 宽屏：指向标题栏那个 ⓘ -->
+            <div v-else class="empty-wide-hint md3-body-small">
+              点击标题旁的 <v-icon icon="mdi-information-outline" size="14" class="mx-1" /> 查看接入方法
             </div>
           </div>
         </div>
@@ -275,7 +331,7 @@ onMounted(() => {
     <!-- 订阅链接 -->
     <v-card rounded="xl" flat class="bg-surface-container-low mt-4">
       <div class="card-head">
-        <v-icon icon="mdi-link-variant" size="20" class="mr-2" color="on-surface-variant" />
+        <v-icon icon="mdi-link-variant" size="20" class="mr-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
         <span class="md3-title-medium">订阅链接</span>
       </div>
       <div class="card-body">
@@ -310,6 +366,26 @@ onMounted(() => {
         </div>
       </div>
     </v-card>
+    <!-- 流量统计接入指引（宽屏用 dialog，避免把同 grid 行的卡片拉长） -->
+    <v-dialog v-model="trafficHelpOpen" max-width="560" scrollable>
+      <v-card rounded="xl">
+        <v-card-title class="d-flex align-center">
+          <v-icon icon="mdi-information-outline" size="20" class="mr-2" color="primary" />
+          流量统计接入方法
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="trafficHelpOpen = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <TrafficSetupGuide :configured="trafficConfigured" />
+        </v-card-text>
+        <v-divider />
+        <v-card-actions>
+          <v-spacer />
+          <v-btn color="primary" variant="flat" @click="trafficHelpOpen = false">知道了</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -493,6 +569,56 @@ onMounted(() => {
 }
 .empty-sub {
   margin-top: 4px;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ── 流量统计配置指引 ── */
+/* 标题栏的 ⓘ：默认弱化，悬停才亮起来，避免抢标题的视觉重量 */
+.guide-btn {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.guide-btn:hover {
+  opacity: 1;
+}
+/* 宽屏空状态里指向 ⓘ 的那行提示 */
+.empty-wide-hint {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--v-theme-on-surface-variant));
+  opacity: 0.75;
+}
+.setup-list {
+  line-height: 1.7;
+}
+.setup-list p {
+  margin: 0 0 8px;
+}
+.setup-list code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(var(--v-theme-surface-container-high));
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+}
+.setup-code {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface-container-high));
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  text-align: left;
+}
+.setup-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(var(--v-theme-outline-variant), 0.5);
   color: rgb(var(--v-theme-on-surface-variant));
 }
 
