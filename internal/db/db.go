@@ -107,6 +107,7 @@ func autoMigrate(db *gorm.DB) error {
 		&model.NodeInitialCheck{},
 		&model.NodeDeepCheck{},
 		&model.SourceTrafficStat{},
+		&model.SourceTrafficDaily{},
 		&model.Sponsor{},
 		&model.Config{},
 		&model.FormatConfig{},
