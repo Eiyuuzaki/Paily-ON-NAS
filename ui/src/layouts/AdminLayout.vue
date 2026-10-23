@@ -62,8 +62,6 @@ const menuItems = [
   { path: '/format-configs', title: '格式配置', icon: 'mdi-file-code-outline' },
   { path: '/logs', title: '日志', icon: 'mdi-text-box-outline' },
 ]
-
-const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)?.title || 'Paily')
 </script>
 
 <template>
@@ -118,11 +116,6 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
 
   <v-app-bar flat class="app-bar">
     <v-app-bar-nav-icon v-if="!isDesktop" icon="mdi-menu" @click="drawer = !drawer" />
-
-    <div class="bar-left">
-      <div class="bar-title md3-title-large">{{ currentTitle }}</div>
-      <div class="bar-sub md3-body-small">Paily ON NAS</div>
-    </div>
 
     <v-spacer />
 
@@ -211,24 +204,32 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
   color: rgb(var(--v-theme-on-surface-variant));
 }
 
-/* 导航项：MD3 药丸高亮 */
+/* 导航项：MD3 药丸高亮，紧凑高度 */
 .nav-list {
   padding-top: 4px;
 }
 .nav-item {
-  margin-bottom: 4px;
-  min-height: 52px;
+  /* MD3 navigation drawer 的单项高度规范是 56dp，但中文界面 44px 更紧凑耐看 */
+  min-height: 44px !important;
+  margin-bottom: 2px;
+  /* 图标与文字间距：MD3 建议 12dp */
+  --v-list-prepend-gap: 12px;
+}
+.nav-item :deep(.v-list-item__prepend) {
+  /* 收紧左侧内边距，让图标不贴边也不过远 */
+  padding-inline-end: 12px;
 }
 .nav-item :deep(.v-list-item-title) {
   font-size: 14px;
   font-weight: 500;
+  letter-spacing: 0.1px;
 }
 /* 选中态：药丸背景 + 加粗（MD3 navigation drawer 规范） */
 .nav-item.v-list-item--active {
   background: rgb(var(--v-theme-secondary-container));
 }
 .nav-item.v-list-item--active :deep(.v-list-item-title) {
-  font-weight: 700;
+  font-weight: 600;
   color: rgb(var(--v-theme-on-secondary-container));
 }
 .nav-item.v-list-item--active :deep(.v-icon) {

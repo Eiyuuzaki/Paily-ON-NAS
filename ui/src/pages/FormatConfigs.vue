@@ -200,13 +200,19 @@ onMounted(() => loadTab('clash'))
 
 <style scoped>
 .page-head {
-  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
 }
 .page-title {
   font-size: 24px;
   line-height: 32px;
   font-weight: 400;
   margin: 0;
+  letter-spacing: 0;
   color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
@@ -215,6 +221,8 @@ onMounted(() => loadTab('clash'))
   margin: 4px 0 0;
   color: rgb(var(--v-theme-on-surface-variant));
 }
+
+
 .mono :deep(textarea) {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;

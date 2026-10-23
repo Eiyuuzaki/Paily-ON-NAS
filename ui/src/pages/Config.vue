@@ -240,15 +240,16 @@ onMounted(loadConfig)
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
+  margin-bottom: 24px;
 }
 .page-title {
   font-size: 24px;
   line-height: 32px;
   font-weight: 400;
   margin: 0;
+  letter-spacing: 0;
   color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
@@ -257,4 +258,6 @@ onMounted(loadConfig)
   margin: 4px 0 0;
   color: rgb(var(--v-theme-on-surface-variant));
 }
+
+
 </style>

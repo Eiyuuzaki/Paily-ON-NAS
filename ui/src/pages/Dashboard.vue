@@ -318,18 +318,25 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
   margin-bottom: 24px;
-  gap: 12px;
 }
 .page-title {
-  margin: 0;
+  font-size: 24px;
+  line-height: 32px;
   font-weight: 400;
+  margin: 0;
+  letter-spacing: 0;
   color: rgb(var(--v-theme-on-surface));
 }
 .page-sub {
+  font-size: 14px;
+  line-height: 20px;
   margin: 4px 0 0;
   color: rgb(var(--v-theme-on-surface-variant));
 }
+
 
 /* ── 概览卡片 ── */
 .overview-grid {
