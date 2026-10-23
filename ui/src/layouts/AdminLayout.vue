@@ -94,7 +94,7 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
         :to="item.path"
         :prepend-icon="item.icon"
         :title="rail ? undefined : item.title"
-        rounded="full"
+        rounded="pill"
         color="secondary-container"
         class="nav-item"
       >
@@ -108,7 +108,7 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
         <v-list-item
           :prepend-icon="rail ? 'mdi-chevron-right' : 'mdi-chevron-left'"
           :title="rail ? undefined : '收起侧栏'"
-          rounded="full"
+          rounded="pill"
           class="nav-item"
           @click="rail = !rail"
         />

@@ -141,7 +141,8 @@ onMounted(() => {
       </div>
       <v-btn
         icon="mdi-refresh"
-        variant="tonal"
+        variant="flat"
+        class="bg-surface-container-high"
         :loading="loading"
         @click="fetchStats(); fetchTraffic()"
       />
@@ -158,12 +159,24 @@ onMounted(() => {
         rounded="xl"
       >
         <div class="overview-inner">
-          <v-icon :icon="c.icon" size="28" :color="c.onContainer" class="overview-icon" />
+          <!-- 用内联 CSS 变量着色，避免 v-icon 的 color prop 走不到 on-* token -->
+          <v-icon
+            :icon="c.icon"
+            size="28"
+            class="overview-icon"
+            :style="{ color: `rgb(var(--v-theme-${c.onContainer}))` }"
+          />
           <div>
-            <div class="overview-label md3-label-medium" :style="{ color: `rgb(var(--v-theme-${c.onContainer}))`, opacity: 0.85 }">
+            <div
+              class="overview-label md3-label-medium"
+              :style="{ color: `rgb(var(--v-theme-${c.onContainer}))` }"
+            >
               {{ c.title }}
             </div>
-            <div class="overview-value md3-headline-large" :style="{ color: `rgb(var(--v-theme-${c.onContainer}))` }">
+            <div
+              class="overview-value md3-headline-large"
+              :style="{ color: `rgb(var(--v-theme-${c.onContainer}))` }"
+            >
               {{ loading ? '—' : (c.value ?? '—') }}
             </div>
           </div>
