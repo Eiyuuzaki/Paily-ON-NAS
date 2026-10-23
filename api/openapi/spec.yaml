@@ -543,7 +543,12 @@ paths:
     get:
       operationId: CheckGetNodes
       tags: [check]
-      summary: Get all node metadata for checker
+      summary: Get the tiered probe set for checker
+      description: >
+        Returns a subset, not every node: alive nodes every round;
+        nodes with fewer than check_dead_proof_rounds initial checks
+        every round; proven-dead nodes once per check_dead_sweep_slots
+        rounds (hash-bucket sweep).
       security: [{ ServiceBearer: [] }]
       responses:
         "200":

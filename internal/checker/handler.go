@@ -55,11 +55,58 @@ func (h *Handler) tagLock(tag string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
+// readConfigInt reads a named key from the configs table.
+// Falls back to defaultVal if the record is missing or unparseable.
+// (Same pattern as source/dead.go and cleanup/cleanup.go.)
+func readConfigInt(db *gorm.DB, key string, defaultVal int) int {
+	var cfg model.Config
+	if err := db.Where("key = ?", key).First(&cfg).Error; err != nil {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(cfg.Value)
+	if err != nil {
+		return defaultVal
+	}
+	return v
+}
+
 // GetNodes handles GET /api/v1/check/nodes.
-// Returns all nodes with metadata only (no history), for checker to pull.
+// Returns a tiered probe set (NOT every node) for checker to pull:
+//
+//	tier 1 — alive nodes: probed every round (fast failover detection)
+//	tier 2 — unproven nodes (fewer than check_dead_proof_rounds initial
+//	         checks, alive or not): probed every round until they either
+//	         turn alive or accumulate enough failed rounds. New nodes from
+//	         the fetcher start at zero checks here, so discovery is not
+//	         broken by the tiering.
+//	tier 3 — proven-dead nodes: deterministic hash-bucket sweep; each node
+//	         is probed when its bucket matches the current time slot, i.e.
+//	         once per check_dead_sweep_slots rounds (= once a day at the
+//	         default 2h cadence). Failed sweeps still write check history,
+//	         so the 4-day source-dead window keeps working unchanged.
+//
+// Without tiering, a pool of ~1500 nodes with ~4% alive wastes 96% of each
+// round's connections on dead nodes (measured 2026-10-24: 8m24s per round).
+// Tunables live in the configs table; deleting the rows restores defaults.
 func (h *Handler) GetNodes(c *gin.Context) {
+	proofRounds := readConfigInt(h.db, "check_dead_proof_rounds", 4)
+	sweepSlots := readConfigInt(h.db, "check_dead_sweep_slots", 12)
+	if proofRounds < 1 {
+		proofRounds = 1
+	}
+	if sweepSlots < 1 {
+		sweepSlots = 1
+	}
+
 	var nodes []model.Node
-	if err := h.db.WithContext(c.Request.Context()).Find(&nodes).Error; err != nil {
+	// hashtext bucketing is PostgreSQL-specific; this deployment targets
+	// PostgreSQL only (see README: static builds ship without sqlite).
+	if err := h.db.WithContext(c.Request.Context()).Raw(`
+		SELECT * FROM nodes
+		WHERE alive = true
+		   OR (SELECT count(*) FROM node_initial_checks WHERE node_id = nodes.id) < ?
+		   OR mod(abs(hashtext(id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
+	`, proofRounds, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
