@@ -11,6 +11,9 @@ import { md3Light, md3Dark } from './plugins/md3-theme'
 
 // ── 自定义 MDI SVG 图标集 ────────────────────────────────────────────────
 // 用按需导入的 SVG path 代替 3.5MB 的 @mdi/font 字体，构建产物小得多。
+//
+// 注意：path 必须显式设置 fill="currentColor"，否则浏览器默认 fill 是黑色，
+// 在暗色主题下黑图标几乎不可见（浅色主题下也能看见，所以容易漏掉）。
 const mdiSvgSet = {
   component: (props: { icon: string }) => {
     const path = mdiIcons[props.icon]
@@ -18,7 +21,7 @@ const mdiSvgSet = {
     return h(
       'svg',
       { viewBox: '0 0 24 24', role: 'img', 'aria-hidden': 'true' },
-      [h('path', { d: path })],
+      [h('path', { d: path, fill: 'currentColor' })],
     )
   },
 }

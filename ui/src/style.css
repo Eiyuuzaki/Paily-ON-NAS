@@ -40,6 +40,13 @@ body {
 .md3-label-medium { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.5px; }
 .md3-label-small { font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: 0.5px; }
 
+/* ── SVG 图标兜底 ─────────────────────────────────────────────────────── */
+/* SVG path 的浏览器默认 fill 是黑色，暗色主题下会变成"黑块"。
+   统一改成跟随 color，保证明暗主题都能正确着色。 */
+svg path {
+  fill: currentColor;
+}
+
 /* ── 页面切换过渡 ─────────────────────────────────────────────────────── */
 .page-slide-enter-active,
 .page-slide-leave-active {
