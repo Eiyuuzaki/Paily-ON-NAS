@@ -150,16 +150,38 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, identifier, info, co
 }
 
 // UpdateUsage stores subscription quota info from the subscription-userinfo header.
+//
+// 同时承担"机场自动识别"：subscription-userinfo 是 sing-box / clash 生态里
+// 付费机场的事实标准，公益订阅基本不会返回它。因此只要走到这里，就认为该源
+// 是机场，把 priority 提升到 1（仅当它当前还是 0，即用户没有手动标记过）。
+//
+// 这个判定很保守 —— 不带额度头的机场不会被识别，需要导入后在前端手动切换
+// 优先级。这是有意的：误判的代价比漏判高（机场被当公益会稀释订阅质量）。
 func (s *Service) UpdateUsage(ctx context.Context, id uuid.UUID, upload, download, total, expire int64) error {
+	updates := map[string]any{
+		"upload":     upload,
+		"download":   download,
+		"total":      total,
+		"expire":     expire,
+		"updated_at": time.Now(),
+	}
+
+	// 只影响 priority = 0 的源，避免覆盖用户手动设过的值（包括手动设为 2 的最高优先级）。
+	if total > 0 || expire > 0 {
+		if err := s.db.WithContext(ctx).Model(&model.Source{}).
+			Where("id = ? AND priority = ?", id, 0).
+			Update("priority", 1).Error; err != nil {
+			// 优先级提升失败不影响额度本身的落库，只记录日志。
+			log.Error().Err(err).Str("source_id", id.String()).Msg("auto priority bump failed")
+		} else {
+			log.Info().Str("source_id", id.String()).
+				Msg("source recognised as airport (subscription-userinfo present), priority -> 1")
+		}
+	}
+
 	return s.db.WithContext(ctx).Model(&model.Source{}).
 		Where("id = ?", id).
-		Updates(map[string]any{
-			"upload":     upload,
-			"download":   download,
-			"total":      total,
-			"expire":     expire,
-			"updated_at": time.Now(),
-		}).Error
+		Updates(updates).Error
 }
 
 // Delete deletes a source, its fetch histories, and calls the cleanup port.

@@ -385,7 +385,7 @@ onMounted(fetchSources)
         </template>
 
         <template #item.priority="{ item }">
-          <v-tooltip text="点击切换：公益 → 机场 → 最高" location="top">
+          <v-tooltip location="top">
             <template #activator="{ props }">
               <v-chip
                 v-bind="props"
@@ -399,6 +399,11 @@ onMounted(fetchSources)
                 {{ priorityLabel(item.priority ?? 0) }}
               </v-chip>
             </template>
+            <div class="tooltip-body">
+              <div>点击切换：公益 → 机场 → 最高</div>
+              <div class="tooltip-note">仅支持带额度头的机场自动识别</div>
+              <div class="tooltip-note">不带额度头的机场需导入后手动切换</div>
+            </div>
           </v-tooltip>
         </template>
 
@@ -557,7 +562,13 @@ onMounted(fetchSources)
               <v-text-field v-model="editForm.info" label="描述" />
             </v-col>
             <v-col cols="12">
-              <v-select v-model="editForm.priority" :items="priorityItems" label="优先级" />
+              <v-select
+                v-model="editForm.priority"
+                :items="priorityItems"
+                label="优先级"
+                hint="仅支持带额度头的机场自动识别；不带额度头的机场需手动切换"
+                persistent-hint
+              />
             </v-col>
           </v-row>
 
@@ -638,6 +649,15 @@ onMounted(fetchSources)
 }
 .alive-num--zero {
   color: rgb(var(--v-theme-error));
+}
+
+/* 优先级 chip 的 tooltip 内容 */
+.tooltip-body {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tooltip-note {
+  opacity: 0.75;
 }
 .quota-cell {
   min-width: 150px;
