@@ -174,7 +174,14 @@ curl -X POST -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/js
 （mihomo+all）、Au1rxx/free-vpn-subscriptions 的 stable 分片。
 第二轮 +1：gslege/CloudflareIP Vless.txt（CF 优选 vless，20 节点；
 其 All/JP/SG.txt 是裸优选 IP 清单，无协议凭证，不可收）。
+第三轮 +2（**两跳策略**：不自己爬 TG，消费已爬 TG 的聚合器，
+免费继承其采集能力）：mahdibland/V2RayAggregator 的
+`sub/airport_sub_merge.txt`（9.6KB 机场过滤子集，61 链接；全量
+sub_merge 1MB 红线不碰）、bin1site1/V2rayFree `config.txt`
+（17.5KB，15 分钟一更；raw 直链 NAS 不通，走 jsdelivr 有缓存延迟）。
 另：原项目组的三网优化订阅与其爬虫源站已全部死亡（见方案 B 注），不可复现。
+mahdibland 节点入口可见 `gzdx.`（广州电信）前缀——三网优化的活样本，
+从移动线路测活即自动完成三网择优。
 
 
 ### 1. 不要用「猜路径」的方式找源
