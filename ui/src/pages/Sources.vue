@@ -242,7 +242,7 @@ const headers = [
   { title: '优先级', key: 'priority', width: 116, sortable: false },
   { title: '额度', key: 'quota', width: 190, sortable: false },
   { title: '内容', key: 'content', minWidth: 160, sortable: false },
-  { title: '节点数', key: 'node_count', width: 84, sortable: false },
+  { title: '存活 / 节点数', key: 'node_count', width: 110, sortable: false },
   { title: '状态', key: 'status', width: 88, sortable: false },
   { title: '忽略死亡', key: 'ignore_dead', width: 92, sortable: false },
   { title: '操作', key: 'actions', width: 120, sortable: false, align: 'end' as const },
@@ -426,9 +426,16 @@ onMounted(fetchSources)
         </template>
 
         <template #item.node_count="{ item }">
-          <span v-if="item.type === 'subscribe' && item.latest_fetch_node_count != null">
-            {{ item.latest_fetch_node_count }}
-          </span>
+          <!--
+            「存活 / 总数」：total 是最近一次成功抓取到的节点数，
+            alive 是其中当前仍存活的。两者都不可用时显示 —。
+          -->
+          <div v-if="item.type === 'subscribe' && item.latest_fetch_node_count != null" class="node-count">
+            <span class="alive-num" :class="{ 'alive-num--zero': (item.alive_node_count ?? 0) === 0 }">
+              {{ item.alive_node_count ?? 0 }}
+            </span>
+            <span class="text-disabled"> / {{ item.latest_fetch_node_count }}</span>
+          </div>
           <span v-else class="text-disabled">—</span>
         </template>
 
@@ -619,6 +626,18 @@ onMounted(fetchSources)
 }
 .priority-chip:hover {
   filter: brightness(1.08);
+}
+/* 存活数：加粗突出，0 存活用 error 色提示 */
+.node-count {
+  white-space: nowrap;
+}
+.alive-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--v-theme-success));
+}
+.alive-num--zero {
+  color: rgb(var(--v-theme-error));
 }
 .quota-cell {
   min-width: 150px;

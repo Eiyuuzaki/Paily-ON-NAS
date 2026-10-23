@@ -268,6 +268,41 @@ func (s *Service) LatestFetchNodeCounts(ctx context.Context, sourceIDs []uuid.UU
 	return m, nil
 }
 
+// AliveNodeCounts returns how many nodes of each source are currently alive,
+// read straight from nodes.alive so it always matches what the node list and
+// the distribution selector see. Sources with no alive node are absent from
+// the map, so callers must treat a missing key as 0 rather than "unknown".
+//
+// Nodes and sources are many-to-many (node_sources), so a node shared by two
+// sources counts once for each of them -- the same way the node list reports it.
+func (s *Service) AliveNodeCounts(ctx context.Context, sourceIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	if len(sourceIDs) == 0 {
+		return map[uuid.UUID]int{}, nil
+	}
+
+	type row struct {
+		SourceID uuid.UUID
+		Count    int
+	}
+	var rows []row
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT ns.source_id, COUNT(*) AS count
+		FROM node_sources ns
+		INNER JOIN nodes n ON n.id = ns.node_id
+		WHERE ns.source_id IN (?) AND n.alive = true
+		GROUP BY ns.source_id
+	`, sourceIDs).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	m := make(map[uuid.UUID]int, len(rows))
+	for _, r := range rows {
+		m[r.SourceID] = r.Count
+	}
+	return m, nil
+}
+
 // ActiveSources returns all non-dead sources (for the fetcher to poll).
 func (s *Service) ActiveSources(ctx context.Context) ([]model.Source, error) {
 	var sources []model.Source

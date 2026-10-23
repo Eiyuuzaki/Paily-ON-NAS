@@ -40,7 +40,8 @@ func (h *SourceHandler) Create(c *gin.Context) {
 		return
 	}
 
-	detail := sourceToDetail(src)
+	// 新建的源还没有节点，存活数直接给 0。
+	detail := sourceToDetail(src, ptr(0))
 	if existed {
 		c.JSON(http.StatusOK, detail)
 	} else {
@@ -102,13 +103,22 @@ func (h *SourceHandler) List(c *gin.Context, params api.SourceListParams) {
 		return
 	}
 
+	// 同时批量查出每个源当前存活的节点数，供列表页展示「存活 / 总数」。
+	aliveCounts, err := h.svc.AliveNodeCounts(c.Request.Context(), uuidIDs)
+	if err != nil {
+		response.InternalError(c, "failed to query alive counts")
+		return
+	}
+
 	summaries := make([]api.SourceSummary, 0, len(srcs))
 	for i := range srcs {
 		var cnt *int
 		if n, ok := fetchCounts[openapi_types.UUID(srcs[i].ID)]; ok {
 			cnt = &n
 		}
-		summaries = append(summaries, sourceToSummary(&srcs[i], cnt))
+		// 没有存活节点时也要给出 0，前端才能区分「确实 0」和「没有数据」。
+		alive := aliveCounts[openapi_types.UUID(srcs[i].ID)]
+		summaries = append(summaries, sourceToSummary(&srcs[i], cnt, &alive))
 	}
 
 	page, limit := f.Page, f.Limit
@@ -139,7 +149,14 @@ func (h *SourceHandler) Get(c *gin.Context, id openapi_types.UUID) {
 		}
 		return
 	}
-	c.JSON(http.StatusOK, sourceToDetail(src))
+	// 详情页同样需要存活数，单个查询即可。
+	aliveCounts, err := h.svc.AliveNodeCounts(c.Request.Context(), []openapi_types.UUID{id})
+	if err != nil {
+		response.InternalError(c, "failed to query alive counts")
+		return
+	}
+	alive := aliveCounts[id]
+	c.JSON(http.StatusOK, sourceToDetail(src, &alive))
 }
 
 // Update handles PUT /api/v1/sources/{id}.
@@ -158,7 +175,13 @@ func (h *SourceHandler) Update(c *gin.Context, id openapi_types.UUID) {
 		}
 		return
 	}
-	c.JSON(http.StatusOK, sourceToDetail(src))
+	aliveCounts, err := h.svc.AliveNodeCounts(c.Request.Context(), []openapi_types.UUID{id})
+	if err != nil {
+		response.InternalError(c, "failed to query alive counts")
+		return
+	}
+	alive := aliveCounts[id]
+	c.JSON(http.StatusOK, sourceToDetail(src, &alive))
 }
 
 // Delete handles DELETE /api/v1/sources/{id}.
@@ -190,12 +213,22 @@ func (h *SourceHandler) IgnoreDead(c *gin.Context, id openapi_types.UUID) {
 		}
 		return
 	}
-	c.JSON(http.StatusOK, sourceToDetail(src))
+	aliveCounts, err := h.svc.AliveNodeCounts(c.Request.Context(), []openapi_types.UUID{id})
+	if err != nil {
+		response.InternalError(c, "failed to query alive counts")
+		return
+	}
+	alive := aliveCounts[id]
+	c.JSON(http.StatusOK, sourceToDetail(src, &alive))
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func sourceToDetail(s *model.Source) api.SourceDetail {
+// ptr returns a pointer to v. Used for the *int / *int64 response fields that
+// are only meaningful when the caller actually queried them.
+func ptr[T any](v T) *T { return &v }
+
+func sourceToDetail(s *model.Source, aliveNodeCount *int) api.SourceDetail {
 	st := api.SourceDetailStatus(s.Status)
 	tp := api.SourceDetailType(s.Type)
 	p := s.Priority
@@ -204,24 +237,25 @@ func sourceToDetail(s *model.Source) api.SourceDetail {
 	tt := s.Total
 	ex := s.Expire
 	return api.SourceDetail{
-		Id:         openapi_types.UUID(s.ID),
-		Identifier: s.Identifier,
-		Info:       s.Info,
-		Content:    &s.Content,
-		Status:     st,
-		Type:       tp,
-		IgnoreDead: &s.IgnoreDead,
-		CreatedAt:  &s.CreatedAt,
-		UpdatedAt:  &s.UpdatedAt,
-		Priority:   &p,
-		Upload:     &up,
-		Download:   &dn,
-		Total:      &tt,
-		Expire:     &ex,
+		Id:             openapi_types.UUID(s.ID),
+		Identifier:     s.Identifier,
+		Info:           s.Info,
+		Content:        &s.Content,
+		Status:         st,
+		Type:           tp,
+		IgnoreDead:     &s.IgnoreDead,
+		CreatedAt:      &s.CreatedAt,
+		UpdatedAt:      &s.UpdatedAt,
+		Priority:       &p,
+		Upload:         &up,
+		Download:       &dn,
+		Total:          &tt,
+		Expire:         &ex,
+		AliveNodeCount: aliveNodeCount,
 	}
 }
 
-func sourceToSummary(s *model.Source, latestFetchNodeCount *int) api.SourceSummary {
+func sourceToSummary(s *model.Source, latestFetchNodeCount *int, aliveNodeCount *int) api.SourceSummary {
 	st := api.SourceSummaryStatus(s.Status)
 	tp := api.SourceSummaryType(s.Type)
 	p := s.Priority
@@ -243,5 +277,6 @@ func sourceToSummary(s *model.Source, latestFetchNodeCount *int) api.SourceSumma
 		Download:             &dn,
 		Total:                &tt,
 		Expire:               &ex,
+		AliveNodeCount:       aliveNodeCount,
 	}
 }

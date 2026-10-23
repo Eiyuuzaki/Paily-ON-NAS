@@ -244,6 +244,30 @@ const logHeaders = [
               <v-list-item title="更新时间" :subtitle="formatDate(detail.updated_at)" />
             </v-list>
 
+            <!-- 节点存活概览 -->
+            <v-row v-if="detail.latest_fetch_node_count != null" dense class="mt-1">
+              <v-col cols="6">
+                <div class="text-caption text-disabled">最近抓取节点</div>
+                <div class="text-h6">{{ detail.latest_fetch_node_count }}</div>
+              </v-col>
+              <v-col cols="6">
+                <div class="text-caption text-disabled">当前存活</div>
+                <div class="text-h6" :class="(detail.alive_node_count ?? 0) > 0 ? 'text-success' : 'text-error'">
+                  {{ detail.alive_node_count ?? 0 }}
+                </div>
+              </v-col>
+              <v-col cols="12">
+                <v-progress-linear
+                  :model-value="detail.latest_fetch_node_count > 0
+                    ? Math.round(((detail.alive_node_count ?? 0) / detail.latest_fetch_node_count) * 100)
+                    : 0"
+                  :color="(detail.alive_node_count ?? 0) > 0 ? 'success' : 'error'"
+                  height="8"
+                  rounded
+                />
+              </v-col>
+            </v-row>
+
             <div v-if="detail.content" class="mt-2">
               <div class="text-subtitle-2 mb-2">内容</div>
               <v-sheet rounded="lg" class="pa-3 mono content-box">
@@ -334,7 +358,9 @@ const logHeaders = [
       <!-- 节点列表 -->
       <v-window-item value="nodes">
         <v-card-text>
-          <div class="text-caption text-disabled mb-2">共 {{ nodesTotal }} 个节点（最多展示 50 条）</div>
+          <div class="text-caption text-disabled mb-2">
+            共 {{ nodesTotal }} 个节点（最多展示 50 条），其中存活 {{ detail?.alive_node_count ?? 0 }} 个
+          </div>
           <v-data-table :headers="nodeHeaders" :items="sourceNodes" :loading="loadingNodes" density="compact" hide-default-footer :items-per-page="-1">
             <template #item.alive="{ item }">
               <StatusTag :status="item.alive ? 'alive' : 'dead'" />

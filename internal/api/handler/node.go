@@ -177,7 +177,8 @@ func nodeToSummary(n *model.Node, latestInitial *model.NodeInitialCheck, latestD
 	if len(sources) > 0 {
 		sums := make([]api.SourceSummary, len(sources))
 		for i := range sources {
-			sums[i] = sourceToSummary(&sources[i], nil)
+			// 节点详情里只展示来源的基本信息，不做节点统计。
+			sums[i] = sourceToSummary(&sources[i], nil, nil)
 		}
 		s.Sources = &sums
 	}
@@ -234,7 +235,7 @@ func nodeToDetail(n *model.Node, sources []model.Source, latestDeep *model.NodeD
 	if len(sources) > 0 {
 		sums := make([]api.SourceSummary, len(sources))
 		for i := range sources {
-			sums[i] = sourceToSummary(&sources[i], nil)
+			sums[i] = sourceToSummary(&sources[i], nil, nil)
 		}
 		detail.Sources = &sums
 	}

@@ -567,7 +567,10 @@ type SourceDetail struct {
 	Download             *int64             `json:"download,omitempty"`
 	Total                *int64             `json:"total,omitempty"`
 	Expire               *int64             `json:"expire,omitempty"`
-	UpdatedAt            *time.Time         `json:"updated_at,omitempty"`
+
+	// AliveNodeCount How many of this source's nodes are currently alive
+	AliveNodeCount *int       `json:"alive_node_count,omitempty"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
 }
 
 // SourceDetailStatus defines model for SourceDetail.Status.
@@ -611,6 +614,9 @@ type SourceSummary struct {
 	Download             *int64              `json:"download,omitempty"`
 	Total                *int64              `json:"total,omitempty"`
 	Expire               *int64              `json:"expire,omitempty"`
+
+	// AliveNodeCount How many of this source's nodes are currently alive
+	AliveNodeCount *int `json:"alive_node_count,omitempty"`
 }
 
 // SourceSummaryStatus defines model for SourceSummary.Status.

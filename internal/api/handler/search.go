@@ -170,7 +170,8 @@ func (h *SearchHandler) SourceSearch(c *gin.Context) {
 
 	data := make([]api.SourceSummary, len(page_))
 	for i, s := range page_ {
-		data[i] = sourceToSummary(&s, nil)
+		// expr 搜索只按表达式筛源，不做节点统计。
+		data[i] = sourceToSummary(&s, nil, nil)
 	}
 
 	c.JSON(http.StatusOK, api.SourceListResponse{

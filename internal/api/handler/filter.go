@@ -67,7 +67,8 @@ func (h *FilterHandler) Preview(c *gin.Context) {
 		}
 		summaries := make([]api.SourceSummary, len(sources))
 		for i, s := range sources {
-			summaries[i] = sourceToSummary(&s, nil)
+			// 预览接口只做匹配测试，不做节点统计。
+			summaries[i] = sourceToSummary(&s, nil, nil)
 		}
 		c.JSON(http.StatusOK, api.FilterPreviewResponse{Sources: &summaries})
 	}

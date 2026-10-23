@@ -32,6 +32,7 @@ export interface SourceSummary {
     ignore_dead?: boolean
     content?: string
     latest_fetch_node_count?: number
+    alive_node_count?: number
     priority?: number
     upload?: number
     download?: number
