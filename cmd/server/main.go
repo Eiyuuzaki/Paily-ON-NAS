@@ -161,16 +161,17 @@ func main() {
 	})
 
 	// Traffic stats endpoint — returns per-source traffic aggregated from mihomo.
+	//
+	// 支持 ?range=day|week|month|all（默认 all）。四个范围统一从
+	// source_traffic_daily 求和，区别只在时间起点：
+	//   day   -> 今天 00:00
+	//   week  -> 今天往前 6 天
+	//   month -> 今天往前 29 天
+	//   all   -> 不带时间条件，累加全部历史
+	//
+	// 全部范围也走 daily 而不是快照表，是因为快照存的是 mihomo 的实时
+	// 计数器，mihomo 一重启就归零；daily 存的是增量，重启不受影响。
 	engine.GET("/api/v1/traffic/stats", func(c *gin.Context) {
-		var stats []model.SourceTrafficStat
-		if err := database.WithContext(c.Request.Context()).
-			Order("recorded_at DESC").
-			Find(&stats).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
-			return
-		}
-
-		// Join with sources for identifier and priority.
 		type trafficItem struct {
 			SourceID   string `json:"source_id"`
 			Identifier string `json:"identifier"`
@@ -180,48 +181,93 @@ func main() {
 			RecordedAt string `json:"recorded_at"`
 		}
 
-		var sources []model.Source
-		if len(stats) > 0 {
-			sourceIDs := make([]uuid.UUID, len(stats))
-			for i, s := range stats {
-				sourceIDs[i] = s.SourceID
+		rng := c.DefaultQuery("range", "all")
+		now := time.Now()
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+		// 计算起始日期；all 为 nil 表示不加时间条件。
+		var since *time.Time
+		switch rng {
+		case "day":
+			since = &today
+		case "week":
+			d := today.AddDate(0, 0, -6)
+			since = &d
+		case "month":
+			d := today.AddDate(0, 0, -29)
+			since = &d
+		case "all":
+			since = nil
+		default:
+			// 未知值按 all 处理，避免 400 打断前端。
+			rng = "all"
+			since = nil
+		}
+
+		type aggRow struct {
+			SourceID uuid.UUID `gorm:"column:source_id"`
+			Upload   int64     `gorm:"column:upload"`
+			Download int64     `gorm:"column:download"`
+		}
+		var rows []aggRow
+
+		q := database.WithContext(c.Request.Context()).Table("source_traffic_daily").
+			Select("source_id, SUM(upload) AS upload, SUM(download) AS download").
+			Group("source_id")
+		if since != nil {
+			q = q.Where("day >= ?", *since)
+		}
+		if err := q.Scan(&rows).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+			return
+		}
+
+		perSource := make(map[uuid.UUID]*trafficItem, len(rows))
+		for _, r := range rows {
+			perSource[r.SourceID] = &trafficItem{
+				SourceID:   r.SourceID.String(),
+				Upload:     r.Upload,
+				Download:   r.Download,
+				RecordedAt: now.Format(time.RFC3339),
 			}
-			database.WithContext(c.Request.Context()).Where("id IN ?", sourceIDs).Find(&sources)
 		}
+		recordedAt := now.Format(time.RFC3339)
 
-		sourceMap := make(map[uuid.UUID]model.Source)
-		for _, s := range sources {
-			sourceMap[s.ID] = s
-		}
-
-		items := make([]trafficItem, len(stats))
+		// 补齐来源信息（identifier / priority），并丢掉没有流量的条目。
+		items := make([]trafficItem, 0, len(perSource))
 		var totalUp, totalDown int64
-		for i, s := range stats {
-			src := sourceMap[s.SourceID]
-			items[i] = trafficItem{
-				SourceID:   s.SourceID.String(),
-				Identifier: src.Identifier,
-				Priority:   src.Priority,
-				Upload:     s.Upload,
-				Download:   s.Download,
-				RecordedAt: s.RecordedAt.Format(time.RFC3339),
+		if len(perSource) > 0 {
+			ids := make([]uuid.UUID, 0, len(perSource))
+			for id := range perSource {
+				ids = append(ids, id)
 			}
-			totalUp += s.Upload
-			totalDown += s.Download
-		}
-
-		var recordedAt string
-		if len(stats) > 0 {
-			recordedAt = stats[0].RecordedAt.Format(time.RFC3339)
+			var sources []model.Source
+			database.WithContext(c.Request.Context()).Where("id IN ?", ids).Find(&sources)
+			srcMap := make(map[uuid.UUID]model.Source, len(sources))
+			for _, s := range sources {
+				srcMap[s.ID] = s
+			}
+			for id, it := range perSource {
+				if it.Upload == 0 && it.Download == 0 {
+					continue
+				}
+				src := srcMap[id]
+				it.Identifier = src.Identifier
+				it.Priority = src.Priority
+				items = append(items, *it)
+				totalUp += it.Upload
+				totalDown += it.Download
+			}
 		}
 
 		// mihomo_configured 让前端能区分"没配 reporter"和"配了但还没流量"，
 		// 两者的处理方式完全不同：前者要改 .env 重启，后者要把设备代理指过来。
 		c.JSON(http.StatusOK, gin.H{
-			"sources":         items,
-			"total_upload":    totalUp,
-			"total_download":  totalDown,
-			"recorded_at":     recordedAt,
+			"sources":           items,
+			"total_upload":      totalUp,
+			"total_download":    totalDown,
+			"recorded_at":       recordedAt,
+			"range":             rng,
 			"mihomo_configured": mihomoURL != "",
 		})
 	})
