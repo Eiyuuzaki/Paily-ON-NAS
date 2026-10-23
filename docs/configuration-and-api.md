@@ -104,6 +104,55 @@ Sponsor 依据 `priority` 从小到大依次匹配，后匹配项覆盖前项，
 
 管理界面的「格式配置」页面可管理 `clash`、`singbox`、`base64` 各自的 JSON 配置。Paily 主服务将这些内容视为由格式生成器定义的不透明 JSON，修改前建议读取并备份当前配置。格式生成能力来自 Paily Fetch 的格式模块；Clash 与 Sing-box 的模板编写方法见 [订阅模板](templates.md)。
 
+## 筛选表达式
+
+基于 [expr-lang](https://expr-lang.org/)，用于节点/来源搜索、过滤预览、分发缓存过滤和命名模板。
+布尔表达式应返回 `true` 或 `false`。
+
+**节点可用字段**：
+
+```text
+Server, Protocol, Password, Hash, Region, Alive, Score, Latency,
+SourcePriority, SourceIDs, Sources, RawConfig, Streaming
+```
+
+> `Latency` 是本仓库新增的字段（毫秒，-1 表示不可达）。
+> `SourcePriority` 也是新增的（0 公益 / 1 机场 / 2 最高），可直接用于区分优先级来源。
+
+常用写法：
+
+| 目的 | 表达式 |
+| --- | --- |
+| 排除中国大陆和未知地区 | `Region == "CN" \|\| Region == "UN"` |
+| 排除高延迟 | `Latency > 800` |
+| 排除低分节点 | `Score < 0.3` |
+| 只看这几个地区 | `!(["HK","TW","SG","JP","US"] contains Region)` |
+| 只保留机场节点 | `SourcePriority >= 1` |
+| 组合 | `Region == "CN" \|\| Region == "UN" \|\| Latency > 800` |
+
+**来源可用字段**：`ID, Identifier, Info, Status, Type`
+
+> 注意：`node_distribute_filter` 的语义是「**返回 `true` 的节点被排除**」，
+> 所以上表写的是"排除"而不是"保留"。
+
+预览表达式（不改动配置）：
+
+```bash
+curl -X POST http://127.0.0.1:21380/api/v1/filter/preview \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"expr":"Latency > 800","target":"node"}'
+```
+
+修改分发过滤器：
+
+```bash
+# 注意 body 是扁平 KV 映射，不是 {"key":..,"value":..}
+curl -X PUT http://127.0.0.1:21380/api/v1/config \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"node_distribute_filter":"Region == \"CN\" || Latency > 800"}'
+# 之后需重启 core 触发缓存重建
+```
+
 ## API 与权限
 
 | 身份 | 凭据 | 可访问范围 |
