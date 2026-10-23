@@ -67,6 +67,19 @@ svg path {
   transform: translateX(-20px);
 }
 
+/* ── 表格表头不换行 ─────────────────────────────────────────────────────── */
+/*
+  中文表头在窄容器里会被逐字折行（协议 → "协" / "议" 上下两行）。
+  Vuetify 的 data-table 表头默认 white-space: normal，每个用到表格的页面
+  都得单独加规则，很容易漏——Filter 页和两个详情抽屉都漏过。
+  做成全局兜底后，页面级规则可以保留，但不再是必需的。
+*/
+.v-data-table th,
+.v-data-table th .v-data-table-header__content {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
 /* ── 工具类 ───────────────────────────────────────────────────────────── */
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
