@@ -59,18 +59,23 @@ async function previewSources() {
   }
 }
 
+/**
+ * 列宽用 minWidth 而不是 width。
+ * width 只是建议值，容器变窄时 v-data-table 会按比例压缩，
+ * 中文表头就会被逐字折行（协议 → 协/议）。minWidth 是硬下限，压不动。
+ */
 const nodeHeaders = [
-  { title: '协议', key: 'protocol', width: 90 },
+  { title: '协议', key: 'protocol', minWidth: 84 },
   { title: '服务器', key: 'server', minWidth: 160 },
-  { title: '区域', key: 'region', width: 70 },
-  { title: '分数', key: 'score', width: 130, sortable: false },
-  { title: '存活', key: 'alive', width: 80 },
+  { title: '区域', key: 'region', minWidth: 72 },
+  { title: '分数', key: 'score', minWidth: 130, sortable: false },
+  { title: '存活', key: 'alive', minWidth: 76 },
 ]
 const sourceHeaders = [
-  { title: '类型', key: 'type', width: 90 },
+  { title: '类型', key: 'type', minWidth: 80 },
   { title: '标识符', key: 'identifier', minWidth: 140 },
   { title: '描述', key: 'info', minWidth: 120 },
-  { title: '状态', key: 'status', width: 90 },
+  { title: '状态', key: 'status', minWidth: 80 },
 ]
 </script>
 
@@ -121,6 +126,7 @@ const sourceHeaders = [
                     hide-default-footer
                     :items-per-page="-1"
                     max-height="500"
+                    class="result-table"
                   >
                     <template #item.score="{ item }">
                       <v-progress-linear :model-value="Math.round(item.score * 100)" height="8" rounded color="primary" />
@@ -169,6 +175,7 @@ const sourceHeaders = [
                     hide-default-footer
                     :items-per-page="-1"
                     max-height="500"
+                    class="result-table"
                   >
                     <template #item.status="{ item }">
                       <StatusTag :status="item.status" />
@@ -216,4 +223,12 @@ const sourceHeaders = [
 }
 
 
+/* 表头不换行：中文列名在窄容器里会被逐字折行（协议 → 协/议） */
+.result-table :deep(th) {
+  white-space: nowrap;
+}
+.result-table :deep(th .v-data-table-header__content) {
+  white-space: nowrap;
+  word-break: keep-all;
+}
 </style>
