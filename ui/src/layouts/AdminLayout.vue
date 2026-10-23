@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import { useAuthStore } from '../stores/auth'
 import { useSettingsStore } from '../stores/settings'
 import QuickOpenDrawer from '../components/QuickOpenDrawer.vue'
@@ -11,10 +11,27 @@ const router = useRouter()
 const authStore = useAuthStore()
 const settings = useSettingsStore()
 const theme = useTheme()
+const { mdAndUp } = useDisplay()
 
-const drawer = ref(true)
+// 桌面端默认展开常驻；移动端默认收起，点汉堡图标才弹出（MD3 规范）
+const drawer = ref(mdAndUp.value)
 const rail = ref(false)
+const isDesktop = computed(() => mdAndUp.value)
 const isDark = computed(() => settings.theme === 'dark')
+
+// 屏幕尺寸变化时同步：切到桌面自动展开，切到移动自动收起
+watch(mdAndUp, (desktop) => {
+  drawer.value = desktop
+  if (!desktop) rail.value = false
+})
+
+// 移动端点菜单跳转后自动收起抽屉
+watch(
+  () => route.path,
+  () => {
+    if (!isDesktop.value) drawer.value = false
+  },
+)
 
 // 全局 API 错误提示（由 request.ts 派发）
 const apiError = ref<string | null>(null)
@@ -52,9 +69,9 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
 <template>
   <v-navigation-drawer
     v-model="drawer"
-    :rail="rail"
-    :permanent="$vuetify.display.mdAndUp"
-    :temporary="$vuetify.display.smAndDown"
+    :rail="rail && isDesktop"
+    :permanent="isDesktop"
+    :temporary="!isDesktop"
     width="228"
     rail-width="80"
     class="app-drawer"
@@ -100,7 +117,7 @@ const currentTitle = computed(() => menuItems.find((m) => m.path === route.path)
   </v-navigation-drawer>
 
   <v-app-bar flat class="app-bar">
-    <v-app-bar-nav-icon v-if="$vuetify.display.smAndDown" @click="drawer = !drawer" />
+    <v-app-bar-nav-icon v-if="!isDesktop" icon="mdi-menu" @click="drawer = !drawer" />
 
     <div class="bar-left">
       <div class="bar-title md3-title-large">{{ currentTitle }}</div>

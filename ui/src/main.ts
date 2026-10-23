@@ -29,6 +29,40 @@ const mdiSvgSet = {
 const vuetify = createVuetify({
   icons: {
     defaultSet: 'mdi-svg',
+    // Vuetify 内部组件（如 v-app-bar-nav-icon 的 $menu、下拉箭头 $subgroup、
+    // 复选框 $checkboxOn 等）通过别名引用图标，必须显式映射到本图标集，
+    // 否则这些内置图标会渲染为空白。
+    aliases: {
+      menu: 'mdi-menu',
+      subgroup: 'mdi-menu-down',
+      dropdown: 'mdi-menu-down',
+      expand: 'mdi-chevron-down',
+      collapse: 'mdi-chevron-up',
+      complete: 'mdi-check',
+      close: 'mdi-close',
+      clear: 'mdi-close',
+      cancel: 'mdi-close',
+      delete: 'mdi-delete-outline',
+      prev: 'mdi-chevron-left',
+      next: 'mdi-chevron-right',
+      first: 'mdi-chevron-double-left',
+      last: 'mdi-chevron-double-right',
+      checkboxOn: 'mdi-checkbox-marked',
+      checkboxOff: 'mdi-checkbox-blank-outline',
+      checkboxIndeterminate: 'mdi-minus-box',
+      radioOn: 'mdi-radiobox-marked',
+      radioOff: 'mdi-radiobox-blank',
+      sortAsc: 'mdi-arrow-up',
+      sortDesc: 'mdi-arrow-down',
+      loading: 'mdi-loading',
+      search: 'mdi-magnify',
+      plus: 'mdi-plus',
+      minus: 'mdi-minus',
+      info: 'mdi-information-outline',
+      warning: 'mdi-alert-outline',
+      error: 'mdi-alert-circle-outline',
+      success: 'mdi-check-circle-outline',
+    },
     sets: {
       'mdi-svg': mdiSvgSet,
     },
