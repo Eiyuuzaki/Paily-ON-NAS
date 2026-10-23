@@ -61,6 +61,7 @@ const menuItems = [
   { path: '/config', title: '运行时配置', icon: 'mdi-cog-outline' },
   { path: '/format-configs', title: '格式配置', icon: 'mdi-file-code-outline' },
   { path: '/logs', title: '日志', icon: 'mdi-text-box-outline' },
+  { path: '/about', title: '关于', icon: 'mdi-information-outline' },
 ]
 </script>
 
@@ -78,7 +79,7 @@ const menuItems = [
     <!-- 品牌区 -->
     <div class="brand" :class="{ 'brand--rail': rail }">
       <div class="brand-logo">
-        <v-icon icon="mdi-hexagon-multiple" size="22" color="on-primary" />
+        <v-icon icon="mdi-hexagon-multiple" size="22" style="color: rgb(var(--v-theme-on-primary))" />
       </div>
       <div v-if="!rail" class="brand-copy">
         <div class="brand-title">Paily</div>
