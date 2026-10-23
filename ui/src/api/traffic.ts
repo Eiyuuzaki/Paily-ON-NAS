@@ -11,15 +11,22 @@ export interface TrafficItem {
   recorded_at: string
 }
 
+/** 流量统计的时间范围 */
+export type TrafficRange = 'day' | 'week' | 'month' | 'all'
+
 export interface TrafficStatsResponse {
   sources: TrafficItem[]
   total_upload: number
   total_download: number
   recorded_at: string
+  /** 后端实际采用的统计范围 */
+  range: TrafficRange
   /** 后端是否配置了 MIHOMO_API_URL。false 表示 reporter 根本没启动。 */
   mihomo_configured: boolean
 }
 
-export function getTrafficStats(): Promise<AxiosResponse<TrafficStatsResponse>> {
-  return request.get<TrafficStatsResponse>('/api/v1/traffic/stats')
+export function getTrafficStats(
+  range: TrafficRange = 'all',
+): Promise<AxiosResponse<TrafficStatsResponse>> {
+  return request.get<TrafficStatsResponse>('/api/v1/traffic/stats', { params: { range } })
 }

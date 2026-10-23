@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { getStats } from '../api/stats'
-import { getTrafficStats, type TrafficStatsResponse } from '../api/traffic'
+import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '../api/traffic'
 import { formatBytes } from '../utils/format'
 import TrafficSetupGuide from '../components/TrafficSetupGuide.vue'
 
@@ -12,6 +12,15 @@ const { mdAndUp } = useDisplay()
 const isWide = computed(() => mdAndUp.value)
 
 const trafficHelpOpen = ref(false)
+
+// 流量统计范围：今天 / 近 7 天 / 近 30 天 / 全部
+const trafficRange = ref<TrafficRange>('day')
+const rangeOptions: { title: string; value: TrafficRange }[] = [
+  { title: '今天', value: 'day' },
+  { title: '近 7 天', value: 'week' },
+  { title: '近 30 天', value: 'month' },
+  { title: '全部', value: 'all' },
+]
 
 interface Stats {
   totalNodes: number | null
@@ -129,13 +138,19 @@ async function fetchStats() {
 async function fetchTraffic() {
   trafficLoading.value = true
   try {
-    const res = await getTrafficStats()
+    const res = await getTrafficStats(trafficRange.value)
     traffic.value = res.data
   } catch {
     traffic.value = null
   } finally {
     trafficLoading.value = false
   }
+}
+
+// 切换范围时重新拉取。用 v-btn-toggle 的 model-value 变化触发。
+function onRangeChange(v: unknown) {
+  if (!v) return
+  fetchTraffic()
 }
 
 onMounted(() => {
@@ -243,9 +258,29 @@ onMounted(() => {
             </template>
           </v-tooltip>
           <v-spacer />
-          <v-chip size="small" variant="tonal" style="color: rgb(var(--v-theme-on-surface-variant))" class="md3-label-small">
-            来自 NAS mihomo
-          </v-chip>
+          <!-- 时间范围切换：今天 / 近 7 天 / 近 30 天 / 全部 -->
+          <v-btn-toggle
+            :model-value="trafficRange"
+            mandatory
+            density="compact"
+            variant="text"
+            divided
+            class="range-toggle md3-label-small"
+            @update:model-value="(v: any) => {
+              if (!v) return
+              trafficRange = v
+              onRangeChange(v)
+            }"
+          >
+            <v-btn
+              v-for="opt in rangeOptions"
+              :key="opt.value"
+              :value="opt.value"
+              size="x-small"
+            >
+              {{ opt.title }}
+            </v-btn>
+          </v-btn-toggle>
         </div>
 
         <div class="card-body">
@@ -553,6 +588,20 @@ onMounted(() => {
   background: rgb(var(--v-theme-surface-container));
   color: rgb(var(--v-theme-on-surface-variant));
   line-height: 1.5;
+}
+
+/* 时间范围切换：紧凑一点，不要抢标题的视觉重量 */
+.range-toggle {
+  border: 1px solid rgba(var(--v-theme-outline-variant), 0.8);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.range-toggle :deep(.v-btn) {
+  border-radius: 0 !important;
+  text-transform: none;
+  letter-spacing: 0;
+  min-width: 0;
+  padding-inline: 10px;
 }
 
 /* ── 空状态 ── */
