@@ -204,7 +204,7 @@ UPDATE sources SET priority = 1 WHERE id = ? AND priority = 0
 ## 8. 实际流量统计（可选）
 
 内置 `traffic reporter`，定期轮询本机 mihomo 的 `/proxies` 接口，把每个节点的
-累计上传/下载按来源聚合，在仪表盘展示"机场 vs 公益"的**实际**流量占比。
+流量按来源聚合，在仪表盘展示"机场 vs 公益"的**实际**流量占比。
 
 默认关闭，需在 `.env` 里指定：
 
@@ -214,6 +214,40 @@ MIHOMO_API_SECRET=你的mihomo密钥
 ```
 
 `172.17.0.1` 是 Docker 网桥对宿主机的地址，适用于 mihomo 跑在 NAS 宿主机的场景。
+
+### 四个统计范围
+
+仪表盘右上角可切换，默认「今天」：
+
+| 范围 | 含义 |
+| --- | --- |
+| 今天 | 今天 00:00 到现在 |
+| 近 7 天 | 含今天在内 7 天 |
+| 近 30 天 | 含今天在内 30 天 |
+| 全部 | 累加全部历史 |
+
+前端调用 `/api/v1/traffic/stats?range=day\|week\|month\|all`。
+
+### 数据是怎么存的
+
+两张表，职责不同：
+
+| 表 | 内容 | 特点 |
+| --- | --- | --- |
+| `source_traffic_stats` | mihomo 计数器的**最新快照** | 每轮被覆写，等于「自 mihomo 启动以来」 |
+| `source_traffic_daily` | 按本地日期聚合的**增量** | 只增不改，四个查询范围都读它 |
+
+每轮轮询计算 `增量 = 本轮计数器 - 上轮计数器`，累加到当天的行上。
+
+**为什么不用累计值**：mihomo 重启后计数器归零，如果直接存累计值，重启那天数字会
+突然变小，按时间范围求和就失去意义。存增量则重启只会丢掉"重启前最后一段未采集的
+部分"，历史完好。计数器变小（负数增量）时按"归零后重新累加"处理。
+
+> **重启不会丢数据**：core 重启、PostgreSQL 重启、mihomo 重启都不影响历史。
+> 只有删除数据库卷（`rm -rf data/`）才会清空。
+
+**存储与性能**：每天最多新增「来源数」行（如 19 个源 = 19 行/天），
+10 年约 7 万行、6.6 MB，查询仍在 50ms 以内，无需定期清理。
 
 ### 为什么默认没有数据
 
@@ -225,16 +259,33 @@ MIHOMO_API_SECRET=你的mihomo密钥
 
 **方式一：设备把 NAS 当代理（推荐，统计最准）**
 
-在 mihomo 配置里开启混合端口，然后让设备的代理指向 NAS：
+在 mihomo 配置里开启混合端口：
 
 ```yaml
 # mihomo config.yaml
 mixed-port: 7890
 allow-lan: true          # 允许局域网设备连进来
+bind-address: '*'
 external-controller: 0.0.0.0:9090   # traffic reporter 要读这个
 ```
 
+> ⚠️ **只改 mihomo 配置不够，还要看容器端口映射。**
+>
+> 如果 `docker-compose.yml` 里写的是 `"172.17.0.1:7890:7890"`，端口就只绑在
+> Docker 网桥上——容器（traffic reporter）能连，但**局域网设备连不上**。
+> 要让 Clash Verge / 手机接入，必须改成 `"7890:7890"`：
+>
+> ```yaml
+> ports:
+>   - "7890:7890"     # 局域网可访问
+>   - "9090:9090"     # Web 面板
+> ```
+>
+> 改完 `docker compose up -d` 重建容器。用
+> `ss -tlnp | grep 7890` 确认绑定的是 `0.0.0.0` 而不是 `172.17.0.1`。
+
 设备侧（以手机为例）：Wi-Fi 高级设置 → 手动代理 → 填 `NAS-IP` + `7890`。
+PC 上用 Clash Verge，可加一个 socks5 节点指向 `NAS-IP:7890`。
 
 **方式二：旁路由模式**
 
@@ -250,12 +301,19 @@ curl -H "Authorization: Bearer <secret>" http://127.0.0.1:9090/version
 # 2. core 的 traffic reporter 有没有起来
 docker compose logs core | grep "traffic reporter"
 # 期望看到：traffic reporter: starting url=http://172.17.0.1:9090
+
+# 3. 局域网能否访问代理端口（在别的设备上执行）
+curl -x socks5://<NAS-IP>:7890 https://api.github.com -o /dev/null -w "%{http_code}"
 ```
 
 看到 reporter 启动日志但仪表盘仍无数据，说明 mihomo 正常、只是还没流量经过。
 
 > mihomo 的 `secret` 必须和 `MIHOMO_API_SECRET` 一致，否则 reporter 会一直 401，
 > 仪表盘永远为空。没有设 secret 就两边都留空。
+
+界面里也内置了同样的接入指引：宽屏点流量卡标题旁的 ⓘ 图标，窄屏是折叠面板，
+并且会自动区分「未配置 mihomo」和「已配置但无流量」两种情况。
+
 
 界面上也能看：仪表盘的流量卡右上角有 ⓘ 按钮（窄屏是折叠面板），点开就是同样的
 接入指引，且会自动区分「未配置」和「已配置但无流量」两种情况。
