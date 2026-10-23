@@ -117,7 +117,7 @@ const sourceHeaders = [
                   <span class="text-subtitle-2">匹配结果</span>
                   <v-chip size="small" variant="tonal" color="primary">{{ nodeResults.length }}</v-chip>
                 </div>
-                <v-card variant="outlined" rounded="xl">
+                <v-card variant="flat" rounded="xl" class="result-card">
                   <v-data-table
                     :headers="nodeHeaders"
                     :items="nodeResults"
@@ -166,7 +166,7 @@ const sourceHeaders = [
                   <span class="text-subtitle-2">匹配结果</span>
                   <v-chip size="small" variant="tonal" color="primary">{{ sourceResults.length }}</v-chip>
                 </div>
-                <v-card variant="outlined" rounded="xl">
+                <v-card variant="flat" rounded="xl" class="result-card">
                   <v-data-table
                     :headers="sourceHeaders"
                     :items="sourceResults"
@@ -223,6 +223,36 @@ const sourceHeaders = [
 }
 
 
+/* ── 结果表格（MD3 data table）────────────────────────────────────────────
+   之前是 outlined 卡片套 v-data-table，两层边框叠出双线，很脏。
+   现在外层用 surface-container-low 做色阶分层，去掉边框；
+   表头用 surface-container 再压一层，行间只留 1px 极淡分隔。
+   MD3 的表格靠色阶建立层次，不靠描边。
+*/
+.result-card {
+  background: rgb(var(--v-theme-surface-container-low));
+  overflow: hidden;
+}
+
+.result-table :deep(.v-data-table__th) {
+  background: rgb(var(--v-theme-surface-container));
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
+}
+
+.result-table :deep(tbody tr) {
+  border-bottom: 1px solid rgba(var(--v-theme-outline-variant), 0.45);
+}
+.result-table :deep(tbody tr:last-child) {
+  border-bottom: none;
+}
+.result-table :deep(tbody tr:hover) {
+  background: rgba(var(--v-theme-on-surface), 0.04);
+}
+
 /* 表头不换行：中文列名在窄容器里会被逐字折行（协议 → 协/议） */
 .result-table :deep(th) {
   white-space: nowrap;
@@ -230,5 +260,10 @@ const sourceHeaders = [
 .result-table :deep(th .v-data-table-header__content) {
   white-space: nowrap;
   word-break: keep-all;
+}
+
+/* 分数列的进度条：细一点，别把行撑高 */
+.score-bar {
+  min-width: 72px;
 }
 </style>
