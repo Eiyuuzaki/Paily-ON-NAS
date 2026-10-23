@@ -77,6 +77,13 @@ for source in sources:
 
 ### 方案 B：自动发现新源（中等难度，收益最大）
 
+**参考实现已存在**：上游归档前留下了 [`openpaily/paicatch2`](https://github.com/openpaily/paicatch2)
+（未归档）——Telethon 抓 TG 频道 + WordPress 解析 + `dsrules/` 规则模块 +
+Source API 上报，即本方案的完整实现。**但其 dsrules 里登记的源站已全部
+死亡**（2026-10-24 实测：freenode.me 站没了、wefound.cc 404、
+clashgithub.com 只剩 16 字节空壳、sharkDoor 停在 2023），复用需要重写规则。
+TG 频道采集方向仍成立（免费节点真正集散地），成本 = TG 账号 + api_id + MySQL。
+
 **做什么**：定期搜索 GitHub 上新增/活跃的节点仓库，验证后自动加入。
 
 **技术路径**：
@@ -165,6 +172,9 @@ curl -X POST -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/js
 
 本轮新增 4 源（+315 节点）：pawdroid/Free-servers、shaoyouvip/free
 （mihomo+all）、Au1rxx/free-vpn-subscriptions 的 stable 分片。
+第二轮 +1：gslege/CloudflareIP Vless.txt（CF 优选 vless，20 节点；
+其 All/JP/SG.txt 是裸优选 IP 清单，无协议凭证，不可收）。
+另：原项目组的三网优化订阅与其爬虫源站已全部死亡（见方案 B 注），不可复现。
 
 
 ### 1. 不要用「猜路径」的方式找源
