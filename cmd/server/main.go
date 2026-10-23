@@ -215,11 +215,14 @@ func main() {
 			recordedAt = stats[0].RecordedAt.Format(time.RFC3339)
 		}
 
+		// mihomo_configured 让前端能区分"没配 reporter"和"配了但还没流量"，
+		// 两者的处理方式完全不同：前者要改 .env 重启，后者要把设备代理指过来。
 		c.JSON(http.StatusOK, gin.H{
-			"sources":        items,
-			"total_upload":   totalUp,
-			"total_download": totalDown,
-			"recorded_at":    recordedAt,
+			"sources":         items,
+			"total_upload":    totalUp,
+			"total_download":  totalDown,
+			"recorded_at":     recordedAt,
+			"mihomo_configured": mihomoURL != "",
 		})
 	})
 
