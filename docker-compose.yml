@@ -116,7 +116,10 @@ services:
       PAILY_CORE_URL: "http://core:21380"
       # 注意：测活后端密钥即 etc/core.yaml 的 checkers[].secret，
       # 与抓取服务用的 service_secret 不是同一个值。
-      CHECK_CRON: ${CHECK_CRON:-0 */2 * * * *}
+      # ⚠️ 六字段 Cron：秒 分 时 日 月 周。*/N 落在「时」位才是每 N 小时；
+      # 写成 "0 */2 * * * *" 会变成每 2 分钟（*/2 落在「分」位），
+      # 曾导致测活每 2 分钟扫一遍全量节点、把家宽打满。默认每 2 小时。
+      CHECK_CRON: ${CHECK_CRON:-0 0 */2 * * *}
       INITIAL_CONCURRENCY: ${INITIAL_CONCURRENCY:-64}
       INITIAL_PING_URL: ${INITIAL_PING_URL:-http://www.gstatic.com/generate_204}
       INITIAL_PING_TIMEOUT_MS: ${INITIAL_PING_TIMEOUT_MS:-6000}
