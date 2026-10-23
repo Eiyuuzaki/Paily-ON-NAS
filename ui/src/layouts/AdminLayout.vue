@@ -73,6 +73,7 @@ const menuItems = [
     width="228"
     rail-width="80"
     class="app-drawer"
+    :class="{ 'app-drawer--rail': rail }"
   >
     <!-- 品牌区 -->
     <div class="brand" :class="{ 'brand--rail': rail }">
@@ -85,30 +86,56 @@ const menuItems = [
       </div>
     </div>
 
-    <v-list nav class="nav-list">
+    <!--
+      Navigation rail（收起态）
+      MD3 规范：active indicator 固定 56x32px、圆角 16px，
+      图标 24px 在容器内绝对居中，未选中项仅显示图标。
+      这里不用 v-list-item —— 它的 prepend/title 布局在 rail 下会把图标挤偏。
+    -->
+    <div v-if="rail" class="rail">
+      <router-link
+        v-for="item in menuItems"
+        :key="item.path"
+        :to="item.path"
+        class="rail-item"
+        :class="{ 'rail-item--active': route.path === item.path }"
+        :title="item.title"
+      >
+        <span class="rail-indicator">
+          <v-icon :icon="item.icon" size="24" />
+        </span>
+      </router-link>
+    </div>
+
+    <v-list v-else nav class="nav-list">
       <v-list-item
         v-for="item in menuItems"
         :key="item.path"
         :to="item.path"
         :prepend-icon="item.icon"
-        :title="rail ? undefined : item.title"
+        :title="item.title"
         rounded="pill"
         color="secondary-container"
         class="nav-item"
-      >
-        <template v-if="rail" #append><span /></template>
-      </v-list-item>
+      />
     </v-list>
 
     <template #append>
-      <v-divider class="mx-3" />
-      <v-list nav class="py-2">
+      <v-divider v-if="!rail" class="mx-3" />
+      <div v-if="rail" class="rail">
+        <div class="rail-item" title="展开侧栏" @click="rail = false">
+          <span class="rail-indicator">
+            <v-icon icon="mdi-chevron-right" size="24" />
+          </span>
+        </div>
+      </div>
+      <v-list v-else nav class="py-2">
         <v-list-item
-          :prepend-icon="rail ? 'mdi-chevron-right' : 'mdi-chevron-left'"
-          :title="rail ? undefined : '收起侧栏'"
+          prepend-icon="mdi-chevron-left"
+          title="收起侧栏"
           rounded="pill"
           class="nav-item"
-          @click="rail = !rail"
+          @click="rail = true"
         />
       </v-list>
     </template>
@@ -158,10 +185,18 @@ const menuItems = [
 </template>
 
 <style scoped>
-/* MD3 导航抽屉：surface-container-low 底色，无阴影 */
+/*
+  MD3 背景层级：
+  展开态用 surface-container-low（与右侧 surface 轻微分层）；
+  rail 收起态改用 surface-container —— 在 80px 的窄条上需要更明确的
+  色阶，否则会和右侧主内容区糊成一片。
+*/
 .app-drawer {
   background: rgb(var(--v-theme-surface-container-low)) !important;
   border: none !important;
+}
+.app-drawer--rail {
+  background: rgb(var(--v-theme-surface-container)) !important;
 }
 .app-drawer :deep(.v-navigation-drawer__content) {
   display: flex;
@@ -178,6 +213,7 @@ const menuItems = [
 .brand--rail {
   justify-content: center;
   padding-inline: 0;
+  padding-bottom: 12px;
 }
 .brand-logo {
   width: 40px;
@@ -202,6 +238,49 @@ const menuItems = [
   font-weight: 500;
   letter-spacing: 1.2px;
   color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ── Navigation Rail（收起态）──────────────────────────────────────────── */
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+.rail-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 56px;
+  text-decoration: none;
+  color: rgb(var(--v-theme-on-surface-variant));
+  transition: color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.rail-item:hover {
+  color: rgb(var(--v-theme-on-surface));
+}
+/*
+  MD3 active indicator：固定 56 x 32px，圆角 16px。
+  不要用 9999px 的胶囊 —— 在 80px 宽的 rail 里会变成横向拉伸的椭圆。
+  固定尺寸，不随容器拉伸，图标因此在容器内绝对居中。
+*/
+.rail-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 32px;
+  border-radius: 16px;
+  transition: background-color 0.18s ease;
+}
+.rail-item--active {
+  color: rgb(var(--v-theme-on-secondary-container));
+}
+.rail-item--active .rail-indicator {
+  background: rgb(var(--v-theme-secondary-container));
 }
 
 /* 导航项：MD3 药丸高亮，紧凑高度 */
@@ -241,19 +320,6 @@ const menuItems = [
 .app-bar {
   background: rgb(var(--v-theme-surface)) !important;
   border-bottom: 1px solid rgba(var(--v-theme-outline-variant), 0.5);
-}
-.bar-left {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-  margin-left: 4px;
-}
-.bar-title {
-  color: rgb(var(--v-theme-on-surface));
-}
-.bar-sub {
-  color: rgb(var(--v-theme-on-surface-variant));
-  letter-spacing: 0.6px;
 }
 
 .app-main {
