@@ -141,6 +141,32 @@ extract: https://example.com/landing-page
 
 ## 五、几个必须知道的坑
 
+### 0. 手动加源 SOP（2026-10-24 实操验证）
+
+搜索 → Trees API 看真实文件 → NAS 上 jsdelivr 验证 → core API 入库：
+
+```bash
+# 1. 验证（在 NAS 上跑，确认格式与节点量，避开链接农场/HTML）
+curl -sL https://fastly.jsdelivr.net/gh/<owner>/<repo>@main/<file> | head -c 300
+
+# 2. 入库（secret 在 /vol1/1000/paily/.env 的 PAILY_SERVICE_SECRET）
+SECRET=$(grep '^PAILY_SERVICE_SECRET=' /vol1/1000/paily/.env | cut -d= -f2)
+curl -X POST -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' \
+  -d '{"type":"subscribe","identifier":"<唯一名>","info":"<备注>","content":"<jsdelivr URL>"}' \
+  http://127.0.0.1:21380/api/v1/sources        # 201=新建 200=已存在
+
+# 3. 立即抓一轮（不等 3h 定时）：docker compose restart fetch
+```
+
+**选源口径**（本节实测沉淀）：文件 5~100KB、节点 20~200 个为宜；
+节点名带实测速度的仓库（如 shaoyouvip/free）质量更高；
+`stable/verified` 类精选目录 > 全量聚合；**每天轮换外部链接的仓库不要收**
+（如 bq2015/FreeProxies 实为 blue2sea.com 引流，URL 每日变，抓不到）。
+
+本轮新增 4 源（+315 节点）：pawdroid/Free-servers、shaoyouvip/free
+（mihomo+all）、Au1rxx/free-vpn-subscriptions 的 stable 分片。
+
+
 ### 1. 不要用「猜路径」的方式找源
 
 我这几轮实测：凭经验猜 `clash.yaml`、`sub.txt` 这类路径，**命中率不到 20%**。正确做法是先用 GitHub Trees API 拿真实文件列表：
