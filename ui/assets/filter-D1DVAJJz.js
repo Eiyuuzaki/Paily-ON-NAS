@@ -1,0 +1,1 @@
+import{n as e}from"./index-DWKCW957.js";function t(t){return e.post(`/api/v1/filter/preview`,t)}export{t};
