@@ -1,5 +1,9 @@
 # Paily ON NAS
 
+<p align="center">
+  <img src=".github/assets/hero.png" alt="Paily ON NAS — 自托管的节点聚合与分发中枢" width="100%">
+</p>
+
 > **把一台闲置的 NAS，变成你自己的节点聚合中枢。**
 
 在 NAS 上自建节点聚合与订阅分发平台：抓取公开订阅源 → 去重 → 测活 → 评分 →
