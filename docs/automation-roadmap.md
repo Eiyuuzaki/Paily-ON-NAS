@@ -170,6 +170,14 @@ curl -X POST -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/js
 `stable/verified` 类精选目录 > 全量聚合；**每天轮换外部链接的仓库不要收**
 （如 bq2015/FreeProxies 实为 blue2sea.com 引流，URL 每日变，抓不到）。
 
+**2026-10-24 试后留结果**：7 个新源经 3~4 轮测活后删 4 留 3——
+删（0 存活）：au1rxx-stable、mahdibland-airport（gzdx 电信入口在移动线路
+全灭，三网优化理论的反面验证）、bin1site1、gslege-CloudflareIP；
+留：shaoyou×2（~8 存活）、pawdroid（1 存活，仅 20 节点成本可忽略）。
+删除走 AdminJWT（`POST /api/v1/auth/login` 拿 token → `DELETE
+/api/v1/sources/{id}`，204 即成，节点自动级联清理）；
+**注意 ServiceBearer 只能建不能删**。
+
 本轮新增 4 源（+315 节点）：pawdroid/Free-servers、shaoyouvip/free
 （mihomo+all）、Au1rxx/free-vpn-subscriptions 的 stable 分片。
 第二轮 +1：gslege/CloudflareIP Vless.txt（CF 优选 vless，20 节点；
