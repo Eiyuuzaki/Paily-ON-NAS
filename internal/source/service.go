@@ -158,6 +158,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, identifier, info, co
 // 这个判定很保守 —— 不带额度头的机场不会被识别，需要导入后在前端手动切换
 // 优先级。这是有意的：误判的代价比漏判高（机场被当公益会稀释订阅质量）。
 func (s *Service) UpdateUsage(ctx context.Context, id uuid.UUID, upload, download, total, expire int64) error {
+	// Read previous values to compute per-period delta.
+	var prev model.Source
+	if err := s.db.WithContext(ctx).Select("upload", "download", "total").
+		Where("id = ?", id).First(&prev).Error; err != nil {
+		log.Error().Err(err).Str("source_id", id.String()).Msg("failed to read previous usage for delta")
+	}
+
 	updates := map[string]any{
 		"upload":     upload,
 		"download":   download,
@@ -176,6 +183,50 @@ func (s *Service) UpdateUsage(ctx context.Context, id uuid.UUID, upload, downloa
 		} else {
 			log.Info().Str("source_id", id.String()).
 				Msg("source recognised as airport (subscription-userinfo present), priority -> 1")
+		}
+	}
+
+	// ── 额度差值 → source_traffic_daily ────────────────────────────────────────
+	// subscription-userinfo 是累计值；两次 fetch 的差值 = 该时段的真实流量。
+	// 首次观测（旧值为全零）无法归因历史用量，跳过不记。
+	// 计数器回退（机场重置）差值为负，按 0 截断。
+	if prev.Total > 0 || prev.Upload > 0 || prev.Download > 0 {
+		dUpload := upload - prev.Upload
+		dDownload := download - prev.Download
+		if dUpload < 0 {
+			dUpload = 0
+		}
+		if dDownload < 0 {
+			dDownload = 0
+		}
+		if dUpload > 0 || dDownload > 0 {
+			now := time.Now()
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			var daily model.SourceTrafficDaily
+			if err := s.db.WithContext(ctx).
+				Where("source_id = ? AND day = ?", id, today).
+				First(&daily).Error; err != nil {
+				// Today's row doesn't exist yet — create it.
+				daily = model.SourceTrafficDaily{
+					SourceID:  id,
+					Day:       today,
+					Upload:    dUpload,
+					Download:  dDownload,
+					UpdatedAt: now,
+				}
+				if err := s.db.WithContext(ctx).Create(&daily).Error; err != nil {
+					log.Error().Err(err).Str("source_id", id.String()).Msg("failed to create daily traffic row")
+				}
+			} else {
+				// Accumulate into today's row.
+				if err := s.db.WithContext(ctx).Model(&daily).Updates(map[string]any{
+					"upload":     daily.Upload + dUpload,
+					"download":   daily.Download + dDownload,
+					"updated_at": now,
+				}).Error; err != nil {
+					log.Error().Err(err).Str("source_id", id.String()).Msg("failed to accumulate daily traffic")
+				}
+			}
 		}
 	}
 
