@@ -195,6 +195,19 @@ mahdibland 节点入口可见 `gzdx.`（广州电信）前缀——三网优化�
 带 subscription-userinfo 头，订阅链接含个人密钥，只存 Paily 源库不入仓库。
 同批注册备选：灯塔加速器（3 天试用）、狗狗加速（3 天 1GB/天）——
 **试用期从注册起算，链接留好，失效那天再注册**。
+第五轮（**paicatch2 考古**，上游爬虫仓库仅一个 squash commit，本地克隆在
+`_paicatch2`）：①config.yaml 的 TG 频道清单（VlessConfig/free4allVPN/
+V2list）仅 VlessConfig 存活——经 `t.me/s/<频道>` **公开网页预览**收割
+18 链接（零账号零 api_id，绕开 userbot 封号风险），入库
+`paicatch-tg-vlessconfig`；②dsrules 6 个日期轮换站实测仅
+**clashgithub.com 存活**（每日 04:00 CST 发布 b64，80+ vless 多为
+IPv6 字面节点——docker v6 改造后测活端才能拨它们），按 `exprdate:`
+前缀入库 `clashgithub-free-nodes`；freenode/clashnode 站死，
+v2rayshare 301 指向 2024 年过期文件，sharkDoor 仓库 404。
+③前置基建：mihomo 增加 `t.me`/`telegram.org` → PROXY 规则（备份
+config.yaml.bak-tg-*），TG 域名此前走 MATCH,DIRECT 直连必死。
+注意 `exprdate:` 的 {y}{m}{d} 按 UTC 展开，而文件 04:00 CST 发布——
+最坏滞后 28 小时，免费节点可接受。
 
 
 ### 1. 不要用「猜路径」的方式找源
