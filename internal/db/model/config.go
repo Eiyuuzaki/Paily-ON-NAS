@@ -43,4 +43,5 @@ var DefaultConfigs = map[string]string{
 	"filename_clash":                   "Paily Connect.yaml",
 	"filename_singbox":                 "Paily Connect.json",
 	"filename_base64":                  "Paily Connect.txt",
+	"profile_update_interval":          "24",
 }

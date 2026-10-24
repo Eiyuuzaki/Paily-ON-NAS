@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -132,7 +133,49 @@ func (h *Handler) Distribute(
 	if filename := configString(h.db, "filename_"+string(formatName), ""); filename != "" {
 		c.Header("Content-Disposition", contentDisposition(filename))
 	}
+	if ui := h.subscriptionUserinfo(); ui != "" {
+		c.Header("Subscription-Userinfo", ui)
+		c.Header("Profile-Update-Interval",
+			strconv.Itoa(configInt(h.db, "profile_update_interval", 24)))
+	}
 	c.Data(http.StatusOK, contentType, output)
+}
+
+// subscriptionUserinfo aggregates airport quota data into the
+// subscription-userinfo header format understood by Clash / Sing-box /
+// Shadowrocket: upload=<B>; download=<B>; total=<B>; expire=<unix seconds>.
+//
+// Only sources that actually report a quota (total > 0) are counted — free
+// GitHub / TG sources never consume any account quota, so mixing them in
+// would dilute the signal. A shrinking displayed quota therefore means
+// airport nodes are carrying traffic; zero movement means everything is
+// riding free nodes. Expire is the soonest expiry across all quota-bearing
+// sources, so the client warns before the earliest renewal is due.
+// Returns "" when no source reports a quota (header omitted entirely —
+// a "0B / 0B" display would be noise).
+func (h *Handler) subscriptionUserinfo() string {
+	var agg struct {
+		Upload   int64
+		Download int64
+		Total    int64
+		Expire   *int64
+	}
+	h.db.Raw(`
+		SELECT COALESCE(SUM(upload), 0)   AS upload,
+		       COALESCE(SUM(download), 0) AS download,
+		       COALESCE(SUM(total), 0)    AS total,
+		       MIN(CASE WHEN expire > 0 THEN expire END) AS expire
+		FROM sources
+		WHERE status = 'active' AND total > 0
+	`).Scan(&agg)
+	if agg.Total <= 0 {
+		return ""
+	}
+	ui := fmt.Sprintf("upload=%d; download=%d; total=%d", agg.Upload, agg.Download, agg.Total)
+	if agg.Expire != nil && *agg.Expire > 0 {
+		ui += fmt.Sprintf("; expire=%d", *agg.Expire)
+	}
+	return ui
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
