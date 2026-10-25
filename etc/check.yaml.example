@@ -24,9 +24,13 @@ schedule:
   cron: "0 0 */2 * * *"
 
 initial:
-  # 实测：用 http:// 探测目标比 https:// 存活率高约一倍
-  # （https 走 TLS-in-TLS，对免费节点过于苛刻）
-  ping_url: "http://www.gstatic.com/generate_204"
+  # ⚠️ 必须用 https:// 而非 http://。
+  # 上游注释曾称「http 比 https 存活率高约一倍」，但实测证明那是假存活：
+  # http 走裸 HTTP 探测，节点出口可本地伪造 204 响应（流量不出国），
+  # 产出「测速 54ms 却连 Google 都打不开」的假节点。
+  # https 走 TLS 握手 + 证书校验，必须真实到达 Google 才能通过——
+  # 存活数会变少，但每一个都真实可用（2026-10-25 实测验证）。
+  ping_url: "https://www.gstatic.com/generate_204"
   ping_avg: 2
   ping_timeout_ms: 6000
   concurrency: 64
