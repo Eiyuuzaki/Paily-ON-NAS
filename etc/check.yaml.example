@@ -33,15 +33,24 @@ initial:
   ping_url: "https://www.gstatic.com/generate_204"
   ping_avg: 2
   ping_timeout_ms: 6000
+  # 样本间睡眠（ms）。曾硬编码 1s 且发生在信号量持有期内，
+  # 白天被睡眠吃掉 40% 并发——初筛吞吐 5.8 → 0.8 节点/秒。
+  # 0 = 关闭（NAS 生产值；链路差时推荐）。
+  ping_gap_ms: 0
   concurrency: 64
   alive_threshold_ms: 6000
 
 deep:
   ping:
-    concurrency: 24
-    avg: 5
-    ping_url: "http://www.gstatic.com/generate_204"
+    # 并发与初筛对齐（64）。深测曾是隐形瓶颈：24 并发下 61 个节点
+    # 要 78s。另注意深测死亡率 ~59%（初筛后 45 秒免费节点成批死亡）
+    # 是免费节点分钟级半衰期，不是探测问题——不要为此调参。
+    concurrency: 64
+    # 单样本：初筛已背书存活，深测只取最终延迟
+    avg: 1
+    ping_url: "https://www.gstatic.com/generate_204"
     timeout_ms: 6000
+    gap_ms: 0
     filter_dead_deep: true
 
   geo:
