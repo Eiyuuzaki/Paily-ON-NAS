@@ -121,7 +121,7 @@ services:
       # 曾导致测活每 2 分钟扫一遍全量节点、把家宽打满。默认每 2 小时。
       CHECK_CRON: ${CHECK_CRON:-0 0 */2 * * *}
       INITIAL_CONCURRENCY: ${INITIAL_CONCURRENCY:-64}
-      INITIAL_PING_URL: ${INITIAL_PING_URL:-http://www.gstatic.com/generate_204}
+      INITIAL_PING_URL: ${INITIAL_PING_URL:-https://www.gstatic.com/generate_204}
       INITIAL_PING_TIMEOUT_MS: ${INITIAL_PING_TIMEOUT_MS:-6000}
       INITIAL_ALIVE_THRESHOLD_MS: ${INITIAL_ALIVE_THRESHOLD_MS:-6000}
       DEEP_PING_CONCURRENCY: ${DEEP_PING_CONCURRENCY:-24}

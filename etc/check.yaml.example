@@ -33,24 +33,27 @@ initial:
   ping_url: "https://www.gstatic.com/generate_204"
   ping_avg: 2
   ping_timeout_ms: 6000
-  # 样本间睡眠（ms）。曾硬编码 1s 且发生在信号量持有期内，
-  # 白天被睡眠吃掉 40% 并发——初筛吞吐 5.8 → 0.8 节点/秒。
-  # 0 = 关闭（NAS 生产值；链路差时推荐）。
-  ping_gap_ms: 0
+  # 样本间睡眠（ms）。代码默认 1000，且睡眠发生在并发名额持有期内。
+  # 曾在单次探测只要 1.5s 时占掉 40% 墙时（初筛 5.8 → 0.8 节点/秒）。
+  # 改用 https 后超时是 6s，这 1s 不再是大头：2026-10-26 20:00 一轮
+  # 198 节点初筛 32s、6.2 节点/秒。设 0 只能再省约 3s，不值得改。
+  ping_gap_ms: 1000
   concurrency: 64
   alive_threshold_ms: 6000
 
 deep:
   ping:
-    # 并发与初筛对齐（64）。深测曾是隐形瓶颈：24 并发下 61 个节点
-    # 要 78s。另注意深测死亡率 ~59%（初筛后 45 秒免费节点成批死亡）
-    # 是免费节点分钟级半衰期，不是探测问题——不要为此调参。
-    concurrency: 64
-    # 单样本：初筛已背书存活，深测只取最终延迟
-    avg: 1
+    # 不要抬到 64。整轮每 2 小时一次，59 个节点深测 44s 已经够用；
+    # 并发再翻倍只是把这几十秒压短，家宽上却要多开一批连接。
+    # docker-compose 注入的 DEEP_PING_CONCURRENCY 优先于本项。
+    concurrency: 24
+    # 不要改成 1。现在 5 次全部失败才记 latency=-1；改成 1 次后，
+    # 一次超时就把初筛刚判活的节点改写成死。抖动也会变成 0，
+    # 稳定性分人人满分，评分里这 30% 不再能区分节点。
+    avg: 5
     ping_url: "https://www.gstatic.com/generate_204"
     timeout_ms: 6000
-    gap_ms: 0
+    gap_ms: 1000
     filter_dead_deep: true
 
   geo:
