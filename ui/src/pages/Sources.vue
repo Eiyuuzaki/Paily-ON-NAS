@@ -7,6 +7,7 @@ import NodeDetailDrawer from '../components/NodeDetailDrawer.vue'
 import { getSources, createSource, updateSource, deleteSource, searchSources, ignoreDeadSource } from '../api/sources'
 import type { SourceSummary, SourceType, SourceStatus } from '../types/api'
 import { formatBytes, formatUnixDate } from '../utils/format'
+import { copyText } from '../utils/clipboard'
 
 // ── list state ──────────────────────────────────────────────────────────
 const tableData = ref<SourceSummary[]>([])
@@ -147,12 +148,8 @@ async function handleDelete(row: SourceSummary) {
 }
 
 async function copyId(id: string) {
-  try {
-    await navigator.clipboard.writeText(id)
-    snack('已复制 ID')
-  } catch {
-    snack('复制失败')
-  }
+  const ok = await copyText(id)
+  snack(ok ? '已复制 ID' : '复制失败')
 }
 
 function formatContent(content: string | undefined): string {

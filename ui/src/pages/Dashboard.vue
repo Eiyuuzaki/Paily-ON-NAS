@@ -4,6 +4,7 @@ import { useDisplay } from 'vuetify'
 import { getStats } from '../api/stats'
 import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '../api/traffic'
 import { formatBytes } from '../utils/format'
+import { copyText } from '../utils/clipboard'
 import TrafficSetupGuide from '../components/TrafficSetupGuide.vue'
 
 // 宽屏用 dialog 承载接入指引（避免展开面板把同 grid 行的卡片拉长），
@@ -40,7 +41,13 @@ const loading = ref(true)
 const trafficLoading = ref(true)
 const copiedKey = ref<string | null>(null)
 
-const BASE = (import.meta.env.VITE_API_BASE as string) || ''
+// 构建时若未注入 VITE_API_BASE，就按当前访问地址推导 core 的地址，
+// 这样界面上显示/复制的是完整链接，而不是空的相对路径 /clash。
+const BASE =
+  (import.meta.env.VITE_API_BASE as string) ||
+  (typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:21380`
+    : '')
 const subscriptions = [
   { key: 'clash', label: 'Clash', url: `${BASE}/clash`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full' },
   { key: 'singbox', label: 'Sing-box', url: `${BASE}/singbox`, desc: 'Sing-box JSON', icon: 'mdi-cube-outline' },
@@ -113,12 +120,10 @@ const trafficSplit = computed(() => {
 const trafficConfigured = computed(() => traffic.value?.mihomo_configured ?? false)
 
 async function copyUrl(key: string, url: string) {
-  try {
-    await navigator.clipboard.writeText(url)
+  const ok = await copyText(url)
+  if (ok) {
     copiedKey.value = key
     setTimeout(() => (copiedKey.value = null), 1600)
-  } catch {
-    /* ignore */
   }
 }
 

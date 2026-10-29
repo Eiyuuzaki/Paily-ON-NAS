@@ -8,6 +8,7 @@ import { getNodes, searchNodes, deleteNode } from '../api/nodes'
 import { getCheckers } from '../api/checkers'
 import type { NodeSummary, NodeListResponse } from '../types/api'
 import { formatLatency } from '../utils/format'
+import { copyText } from '../utils/clipboard'
 
 // ── state ──────────────────────────────────────────────────────────────
 const tableData = ref<NodeSummary[]>([])
@@ -106,12 +107,8 @@ async function handleDelete(node: NodeSummary) {
 }
 
 async function copyId(id: string) {
-  try {
-    await navigator.clipboard.writeText(id)
-    snack('已复制 ID')
-  } catch {
-    snack('复制失败')
-  }
+  const ok = await copyText(id)
+  snack(ok ? '已复制 ID' : '复制失败')
 }
 
 function openDetail(node: NodeSummary) {

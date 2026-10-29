@@ -2,8 +2,14 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { getFormatConfig, updateFormatConfig } from '../api/formatConfigs'
 import type { FormatName } from '../api/formatConfigs'
+import { copyText } from '../utils/clipboard'
 
-const BASE = (import.meta.env.VITE_API_BASE as string) || ''
+// 未注入 VITE_API_BASE 时按当前访问地址推导，显示完整链接而不是相对路径
+const BASE =
+  (import.meta.env.VITE_API_BASE as string) ||
+  (typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:21380`
+    : '')
 
 const formats: FormatName[] = ['clash', 'singbox', 'base64']
 const subUrls: Record<FormatName, string> = {
@@ -77,11 +83,11 @@ async function saveTab(fmt: FormatName) {
 }
 
 async function copyUrl(fmt: FormatName, url: string) {
-  try {
-    await navigator.clipboard.writeText(url)
+  const ok = await copyText(url)
+  if (ok) {
     copied.value = fmt
     setTimeout(() => (copied.value = null), 1600)
-  } catch {
+  } else {
     notify('复制失败', 'error')
   }
 }
