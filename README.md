@@ -132,6 +132,8 @@ docker compose --profile ui up -d
 # 访问 http://<NAS-IP>:21381
 ```
 
+> 构建产物 `ui/dist/` 不入 git：clone 后必须先跑上面的构建命令，nginx 才有页面可挂。
+
 **常用运维命令**
 
 ```bash

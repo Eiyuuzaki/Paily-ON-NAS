@@ -67,8 +67,8 @@ paily-on-nas/
 │   ├── paily-fetch
 │   └── paily-check
 ├── scripts/                     # 解锁检测脚本（可选）
-├── ui/
-│   ├── dist/                    # 管理界面构建产物（可选）
+├── ui/                          # 管理界面源码
+│   ├── dist/                    # 构建产物（npm run build 生成，不入库）
 │   └── nginx.conf               # 管理界面反代配置
 └── data/postgres/               # 数据库存储（自动创建）
 ```
@@ -146,7 +146,9 @@ SFTP 常规 `UploadFile` 在 28~36 MB 的二进制上会报 "Failure"。可行�
 
 ### 5. 管理界面容器
 
-nginx 配置做了同源反代（`/api/` → core，`/clash`、`/singbox`、`/base64` 同步代理），
-所以界面里复制的订阅链接是相对路径，不需要额外配域名。
+nginx 配置做了同源反代（`/api/` → core，`/clash`、`/singbox`、`/base64` 同步代理）。
+界面里的订阅链接按当前访问地址推导出完整 URL（`http://<主机>:21380/clash` 等），
+复制在 http 内网也可用（Clipboard API 不可用时退回 execCommand）。
 
-前端构建产物放 `ui/dist/`，用 `docker compose --profile ui up -d` 启动。
+前端构建产物放 `ui/dist/`（`cd ui && npm install && npm run build` 生成，不入库），
+用 `docker compose --profile ui up -d` 启动。
