@@ -18,9 +18,17 @@ import (
 // Path A — date-window-based full dead:
 //
 //	windowStart = now - node_dead_window_days
-//	IF oldest check record across mapped nodes predates windowStart
-//	   (window is fully covered)
+//	IF oldest check record for mapped nodes *created after the source*
+//	   predates windowStart (the source has itself been observed for a
+//	   full window)
 //	AND every record within [windowStart, now] has latency_ms == -1 → dead
+//
+// The "after source creation" bound is essential. Free-node sources overlap
+// heavily, so a newly added source maps to nodes that already carry days of
+// failed check history belonging to other sources. Without the bound, the
+// window-coverage precondition is satisfied on day zero and a brand-new source
+// is condemned within one round for failures that happened before it existed
+// (observed: sources killed 1.5–2h after creation, never given a trial).
 //
 // Path B — expiry / long-silence:
 //
@@ -62,13 +70,15 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 	}
 	const batchSize = 10000
 
-	// Find the oldest check across all mapped nodes (to verify window coverage).
+	// Find the oldest check made since this source existed (to verify window
+	// coverage). Records predating src.CreatedAt belong to other sources that
+	// happen to share these nodes and must not count as observation of this one.
 	var oldest model.NodeInitialCheck
 	oldestErr := gorm.ErrRecordNotFound
 	for _, batch := range chunkUUIDs(nodeIDs, batchSize) {
 		var candidate model.NodeInitialCheck
 		err := db.WithContext(ctx).
-			Where("node_id IN ?", batch).
+			Where("node_id IN ? AND checked_at >= ?", batch, src.CreatedAt).
 			Order("checked_at ASC").
 			First(&candidate).Error
 		if err != nil {
@@ -86,13 +96,13 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 		return false, oldestErr
 	}
 
-	// Find the latest check for Path B.
+	// Find the latest check for Path B (also bounded to this source's lifetime).
 	var latest model.NodeInitialCheck
 	latestErr := gorm.ErrRecordNotFound
 	for _, batch := range chunkUUIDs(nodeIDs, batchSize) {
 		var candidate model.NodeInitialCheck
 		err := db.WithContext(ctx).
-			Where("node_id IN ?", batch).
+			Where("node_id IN ? AND checked_at >= ?", batch, src.CreatedAt).
 			Order("checked_at DESC").
 			First(&candidate).Error
 		if err != nil {
