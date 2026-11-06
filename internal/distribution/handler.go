@@ -73,6 +73,12 @@ func (h *Handler) Distribute(
 		if e.ChainEntryOnly {
 			continue
 		}
+		// CN nodes are relays too: their egress is domestic, useless as exits,
+		// and pushing the same node as both entry and exit renders duplicate
+		// proxy names, which mihomo clients reject outright.
+		if e.Region == "CN" {
+			continue
+		}
 		if len(requestedUnlocks) > 0 {
 			switch filterMode {
 			case "select":
