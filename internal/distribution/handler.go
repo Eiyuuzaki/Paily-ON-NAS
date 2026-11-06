@@ -113,11 +113,34 @@ func (h *Handler) Distribute(
 		Msg("distribution: nodes selected")
 
 	// ── 3. Build unlock flags and generate names, then push to generator ──────
+	// Domestic (CN) survivors act as entry relays for the rest: a free node
+	// reachable from a mainland line usually has to be dialled *through* a
+	// domestic hop, otherwise the client times out and the node looks dead.
+	// When no CN node survived, chainPlan is nil and the output is flat —
+	// identical to the pre-chain behaviour.
+	cnEntries := make([]*cache.NodeCacheEntry, 0, len(candidates))
+	for _, e := range candidates {
+		if e.Region == "CN" {
+			cnEntries = append(cnEntries, e)
+		}
+	}
+	chainPlan, entryNames := buildChainPlan(
+		c.Request.Context(), selected, cnEntries,
+		chainRenderFunc(c.Request.Context(), h.db, preset, filterMode),
+	)
+
 	gen := factory.NewGenerator()
-	for _, sn := range selected {
+	// Entries are emitted first so every "dialer-proxy" target exists in the
+	// output before the exits that reference it (mihomo resolves by name).
+	for i, name := range entryNames {
+		if i < len(cnEntries) {
+			gen.Push(cnEntries[i].ProxyNode, name)
+		}
+	}
+	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
 		name := naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
-		gen.Push(sn.Entry.ProxyNode, name)
+		gen.Push(proxyWithChain(sn.Entry.ProxyNode, chainPlan[i]), name)
 	}
 
 	// ── 4. Load format config and generate output ─────────────────────────────
