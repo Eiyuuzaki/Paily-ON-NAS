@@ -68,6 +68,11 @@ func (h *Handler) Distribute(
 
 	var candidates []*cache.NodeCacheEntry
 	for _, e := range all {
+		// Entry-only nodes are relays, not exits: emitting them as standalone
+		// proxies would expose the plaintext hop the exit filter rejects.
+		if e.ChainEntryOnly {
+			continue
+		}
 		if len(requestedUnlocks) > 0 {
 			switch filterMode {
 			case "select":
@@ -118,8 +123,10 @@ func (h *Handler) Distribute(
 	// domestic hop, otherwise the client times out and the node looks dead.
 	// When no CN node survived, chainPlan is nil and the output is flat —
 	// identical to the pre-chain behaviour.
-	cnEntries := make([]*cache.NodeCacheEntry, 0, len(candidates))
-	for _, e := range candidates {
+	// Chain entries: every alive CN node, including entry-only ones that the
+	// exit filter rejected (they exist purely to relay).
+	cnEntries := make([]*cache.NodeCacheEntry, 0, len(all))
+	for _, e := range all {
 		if e.Region == "CN" {
 			cnEntries = append(cnEntries, e)
 		}

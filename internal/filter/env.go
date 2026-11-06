@@ -30,6 +30,12 @@ type NodeFilterEnv struct {
 	Streaming map[string]bool
 	// SourcePriority is the max priority across all sources for this node.
 	SourcePriority int
+	// IsChainEntry marks a node kept in cache only because it can serve as a
+	// chain entry (domestic relay). Such nodes are never emitted as standalone
+	// exits; the distribution layer uses them solely as dialer-proxy targets.
+	// Set by the cache rebuild when the exit filter rejected the node but it
+	// still qualifies as an entry (see chainEntryCandidate).
+	IsChainEntry bool
 }
 
 // SourceFilterEnv is the evaluation context for source filter expressions.

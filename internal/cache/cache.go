@@ -38,6 +38,12 @@ type NodeCacheEntry struct {
 
 	// Pre-parsed clash proxy node, shared across all format generators.
 	ProxyNode *node.ProxyNode
+
+	// ChainEntryOnly is true when this node survived the cache only because it
+	// qualifies as a chain entry (domestic relay) while the exit filter rejected
+	// it. Distribution must not emit it as a standalone exit — it is used only as
+	// a dialer-proxy target.
+	ChainEntryOnly bool
 }
 
 // tagSubCache is the alive-node view for a single checker tag.

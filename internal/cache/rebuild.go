@@ -278,12 +278,22 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 				SourcePriority: priorityByNode[n.ID],
 			}
 
+			chainEntryOnly := false
 			if distributeFilterExpr != "" {
 				excluded, err := filter.EvalBool(distributeFilterExpr, nodeEnv)
 				if err != nil {
 					log.Warn().Err(err).Str("node_id", n.ID.String()).Msg("cache rebuild: filter eval error, including node")
 				} else if excluded {
-					continue
+					// The exit filter rejected this node, but a domestic node
+					// with credentials can still serve as a chain entry: the
+					// client reaches it as a relay and the exit does the
+					// egress, so the entry's plaintext hop never sees content.
+					// Keep it in cache flagged as entry-only.
+					if chainEntryCandidate(n, sharedRawConfig[n.ID]) {
+						chainEntryOnly = true
+					} else {
+						continue
+					}
 				}
 			}
 
@@ -303,6 +313,7 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 				ProxyNode:       sharedProxy[n.ID],
 			}
 			entry.SponsorText = sponsorSvc.Match(ctx, nodeEnv)
+			entry.ChainEntryOnly = chainEntryOnly
 
 			entries[n.ID] = entry
 			region := n.Region
@@ -397,4 +408,41 @@ func chunkUUIDs(ids []uuid.UUID, batchSize int) [][]uuid.UUID {
 		batches = append(batches, ids[start:end])
 	}
 	return batches
+}
+
+// chainEntryCandidate reports whether a node rejected by the exit filter can
+// still serve as a chain entry (domestic relay).
+//
+// Rationale: the exit filter excludes plaintext http/socks5 because those
+// nodes would expose the whole browsing session if used as an exit. As a chain
+// entry they only relay an already-encrypted tunnel to the real exit, so the
+// entry hop learns nothing but "which exit this client uses". That is a
+// meaningful risk reduction, not a waiver of the original rule.
+//
+// Requirements kept deliberately strict:
+//   - region must be "CN" (the entry exists to shorten the first hop and to
+//     hide the household IP from the exit side)
+//   - the node must carry credentials (uuid / username / password), otherwise
+//     anyone could impersonate it and hijack the relay
+//   - protocol must be one the chain machinery supports
+func chainEntryCandidate(n *model.Node, raw map[string]any) bool {
+	if n.Region != "CN" {
+		return false
+	}
+	switch n.Protocol {
+	case "http", "socks5":
+	default:
+		return false
+	}
+	if raw == nil {
+		return false
+	}
+	for _, k := range []string{"uuid", "username", "password", "password", "auth"} {
+		if v, ok := raw[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
