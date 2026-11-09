@@ -8,6 +8,26 @@
 
 评分按「节点 + 测活后端 tag」分别计算。每个 tag 的评分独立保存，节点最终评分为所有大于 0 的 tag 评分的算术平均。这样可以在不同网络视角下分别衡量节点质量。
 
+## 失败原因分类
+
+初筛判死时，测活后端会把原因一并上报，存进 `node_initial_checks.fail_reason`。
+分值本身仍只看延迟与抖动，但原因能让「这条线到底为什么不行」变得可回答：
+
+| `fail_reason` | 含义 |
+| --- | --- |
+| `timeout` | 探测超时（丢包、黑洞、线路拥塞） |
+| `conn_refused` | 端口拒绝连接 |
+| `dns` | 解析失败 |
+| `tls_handshake` | TLS 握手失败（常见于协议级拦截） |
+| `dial_failed` | 建连失败 |
+| `conn_reset` | 连接被重置 |
+| `deep_timeout` | 初筛通过但复筛全灭 |
+| `semaphore_timeout` | 排队超时，未真正探测 |
+| `aborted` | 探测被中断 |
+| 空 | 旧版本测活后端写入的历史数据，展示时归为 `unknown` |
+
+聚合视图见 [配置与 API](configuration-and-api.md) 的 `/api/v1/observability/fail-reasons`。
+
 ## 时间权重
 
 评分只取该节点、该 tag 最近 20 条复筛记录，越新的记录权重越高。最新一条记录的序号为 `i = 0`，第 `i` 条记录的权重为 `alpha^i`：

@@ -57,6 +57,9 @@ Paily 主服务的配置分为两层：
 | 历史 | `fetch_history_window_days` | `7` | 抓取历史基础保留天数。 |
 | 历史 | `check_run_history_days` | `7` | 测活历史基础保留天数。 |
 | 历史 | `cleanup_interval_minutes` | `30` | 清理间隔，单位分钟。 |
+| 池子 | `ingress_max_per_endpoint` | `3` | 同一 `server:port` 最多准入的新节点数。 |
+| 池子 | `ingress_zero_yield_quota` | `20` | 零产出协议（ss/ssr/hysteria2/socks5/tuic/anytls/wireguard）各自的池内上限。 |
+| 池子 | `node_never_alive_retention_days` | `3` | 从未存活节点的归档保留天数，`0` 关闭归档。 |
 | 文件名 | `filename_clash` | `Paily Connect.yaml` | Clash 下载文件名。 |
 | 文件名 | `filename_singbox` | `Paily Connect.json` | Sing-box 下载文件名。 |
 | 文件名 | `filename_base64` | `Paily Connect.txt` | Base64 下载文件名。 |
@@ -163,5 +166,16 @@ curl -X PUT http://127.0.0.1:21380/api/v1/config \
 | Paily 测活后端 | 专用测活密钥或 `service_secret` | `/api/v1/check/*`。专用密钥对应配置的 tag；`service_secret` 使用 `default` tag。 |
 
 `POST /api/v1/sources` 同时允许管理员 JWT 与 `service_secret`，用于管理界面手工建源和源提交器自动提交。其他普通管理资源不接受 `service_secret`。
+
+### 可观测接口
+
+两个只读接口供管理面板展示池子健康状况，需要管理员 JWT。`hours` 参数取值 1–720，默认 48。
+
+| 接口 | 返回 |
+| --- | --- |
+| `GET /api/v1/observability/fail-reasons?hours=` | 窗口内判死记录按 `fail_reason` 聚合的数量与占比，空原因归为 `unknown`。 |
+| `GET /api/v1/observability/health-trend?hours=` | 每轮测活的节点总数、存活数、存活率、存活节点延迟 P50，按时间正序。 |
+
+健康趋势先取窗口内**最新** 200 轮再正序输出，因此长窗口（如 30 天）不会因为截断而丢掉最近的数据。节点总数按实际写入的初筛记录统计，与存活数同口径。
 
 完整接口定义见 [`../api/openapi/spec.yaml`](../api/openapi/spec.yaml)。
