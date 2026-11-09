@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,7 +89,7 @@ func main() {
 	checkerHandler := checker.NewHandler(database, sourceSvc, nodeSvc, scoringSvc, aliveCache)
 
 	// Start periodic history cleanup goroutine.
-	cleanup.Start(context.Background(), database)
+	cleanup.Start(context.Background(), database, aliveCache)
 
 	// Start traffic reporter (polls mihomo external-controller for per-source traffic).
 	mihomoURL := os.Getenv("MIHOMO_API_URL")
@@ -272,6 +274,126 @@ func main() {
 		})
 	})
 
+	// Observability endpoints (read-only, same exposure model as traffic/stats).
+	// 服务于管理面板「可观测性」卡片：失败原因分布 + 池子健康趋势。
+	// fail_reason 空串 = 旧二进制历史数据，归为 unknown；趋势按 check_run
+	// 聚合（GROUP BY + JOIN，禁相关子查询——热表教训）。
+	parseObsHours := func(c *gin.Context) int {
+		h := 48
+		if v := c.Query("hours"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 720 {
+				h = n
+			}
+		}
+		return h
+	}
+
+	// GET /api/v1/observability/fail-reasons?hours=48
+	engine.GET("/api/v1/observability/fail-reasons", func(c *gin.Context) {
+		hours := parseObsHours(c)
+		type reasonRow struct {
+			Reason string `gorm:"column:reason"`
+			Count  int64  `gorm:"column:count"`
+		}
+		var rows []reasonRow
+		if err := database.WithContext(c.Request.Context()).
+			Table("node_initial_checks").
+			Select("COALESCE(NULLIF(fail_reason, ''), 'unknown') AS reason, COUNT(*) AS count").
+			Where("latency_ms = -1 AND checked_at >= ?", time.Now().Add(-time.Duration(hours)*time.Hour)).
+			Group("reason").Order("count DESC").
+			Scan(&rows).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+			return
+		}
+		var total int64
+		for _, r := range rows {
+			total += r.Count
+		}
+		type reasonItem struct {
+			Reason string  `json:"reason"`
+			Count  int64   `json:"count"`
+			Pct    float64 `json:"pct"`
+		}
+		items := make([]reasonItem, 0, len(rows))
+		for _, r := range rows {
+			pct := 0.0
+			if total > 0 {
+				pct = math.Round(float64(r.Count)/float64(total)*1000) / 10
+			}
+			items = append(items, reasonItem{Reason: r.Reason, Count: r.Count, Pct: pct})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"window_hours":   hours,
+			"total_failures": total,
+			"reasons":        items,
+		})
+	})
+
+	// GET /api/v1/observability/health-trend?hours=48
+	engine.GET("/api/v1/observability/health-trend", func(c *gin.Context) {
+		hours := parseObsHours(c)
+		type runRow struct {
+			RunID       uuid.UUID `gorm:"column:run_id"`
+			CompletedAt time.Time `gorm:"column:completed_at"`
+			NodeCount   int64     `gorm:"column:node_count"`
+			Alive       int64     `gorm:"column:alive"`
+			P50Latency  *float64  `gorm:"column:p50_latency"`
+		}
+		// 先取窗口内最新的 200 轮，再按时间正序输出。若直接 ORDER BY ASC + LIMIT，
+		// 长窗口（如 30 天 ≈360 轮）会截掉最新的轮次、只留下最旧的——与本接口
+		// "看最近健康度"的语义相反。total 也用 COUNT(nic.id) 与 alive 同口径，
+		// 避免 node_count 与实际写入行数不一致时算出 >100% 的存活率。
+		const trendSQL = `
+WITH recent AS (
+    SELECT id, completed_at
+    FROM checker_runs
+    WHERE completed_at >= ?
+    ORDER BY completed_at DESC
+    LIMIT 200
+)
+SELECT r.id AS run_id,
+       r.completed_at,
+       COUNT(nic.id) AS node_count,
+       COUNT(nic.id) FILTER (WHERE nic.latency_ms <> -1) AS alive,
+       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY nic.latency_ms)
+           FILTER (WHERE nic.latency_ms <> -1) AS p50_latency
+FROM recent r
+JOIN node_initial_checks nic ON nic.check_run_id = r.id
+GROUP BY r.id, r.completed_at
+ORDER BY r.completed_at ASC`
+		var rows []runRow
+		if err := database.WithContext(c.Request.Context()).
+			Raw(trendSQL, time.Now().Add(-time.Duration(hours)*time.Hour)).
+			Scan(&rows).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+			return
+		}
+		type runItem struct {
+			CompletedAt string   `json:"completed_at"`
+			Total       int64    `json:"total"`
+			Alive       int64    `json:"alive"`
+			AlivePct    float64  `json:"alive_pct"`
+			P50Latency  *float64 `json:"p50_latency_ms"`
+		}
+		items := make([]runItem, 0, len(rows))
+		for _, r := range rows {
+			pct := 0.0
+			if r.NodeCount > 0 {
+				pct = math.Round(float64(r.Alive)/float64(r.NodeCount)*1000) / 10
+			}
+			items = append(items, runItem{
+				CompletedAt: r.CompletedAt.Format(time.RFC3339),
+				Total:       r.NodeCount,
+				Alive:       r.Alive,
+				AlivePct:    pct,
+				P50Latency:  r.P50Latency,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"window_hours": hours,
+			"runs":         items,
+		})
+	})
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Info().Str("addr", addr).Msg("paily-core starting")
 

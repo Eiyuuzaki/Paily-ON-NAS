@@ -45,4 +45,5 @@ type SourceFilterEnv struct {
 	Info       string
 	Status     string // "active" | "dead"
 	Type       string // "subscribe" | "node"
+	Origin     string // self-built | paid-airport | public-airport | free-list | aggregator | wild
 }

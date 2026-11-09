@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,13 +10,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/gin-gonic/gin"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/naming"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/format"
+	node "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -150,10 +152,21 @@ func (h *Handler) Distribute(
 			gen.Push(cnEntries[i].ProxyNode, name)
 		}
 	}
+	// Resolve source origins once for the whole batch: a subscription may emit
+	// hundreds of nodes, and a per-node query would mean hundreds of round-trips
+	// on the hottest request path.
+	originPrefix := h.originPrefixResolver(c.Request.Context(), selected)
 	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
-		name := naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
-		gen.Push(proxyWithChain(sn.Entry.ProxyNode, chainPlan[i]), name)
+		name := originPrefix(sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
+		proxy := proxyWithChain(sn.Entry.ProxyNode, chainPlan[i])
+		if rg, ok := gen.(interface {
+			PushWithRegion(n *node.ProxyNode, name, region string)
+		}); ok {
+			rg.PushWithRegion(proxy, name, sn.Entry.Region)
+		} else {
+			gen.Push(proxy, name)
+		}
 	}
 
 	// ── 4. Load format config and generate output ─────────────────────────────
@@ -189,6 +202,87 @@ func (h *Handler) Distribute(
 // sources, so the client warns before the earliest renewal is due.
 // Returns "" when no source reports a quota (header omitted entirely —
 // a "0B / 0B" display would be noise).
+
+// originRank orders origins from most to least authoritative. A node linked to
+// several sources is labelled with the best one (e.g. a paid-airport node that
+// an aggregator also republishes is still [付费]).
+var originRank = map[string]int{
+	"self-built": 6, "paid-airport": 5, "public-airport": 4,
+	"free-list": 3, "aggregator": 2, "wild": 1,
+}
+
+// originPrefixResolver loads every source origin referenced by entries in ONE
+// query and returns a per-entry labeller.
+//
+// Distribution is the hottest request path (clients poll subscriptions), and a
+// single response can contain hundreds of nodes, so the previous
+// query-per-node implementation multiplied one request into hundreds of
+// round-trips.
+func (h *Handler) originPrefixResolver(ctx context.Context, selected []SelectedNode) func(*cache.NodeCacheEntry) string {
+	seen := make(map[string]struct{}, 64)
+	ids := make([]string, 0, 64)
+	for _, sn := range selected {
+		if sn.Entry == nil {
+			continue
+		}
+		for _, id := range sn.Entry.SourceIDs {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	origin := make(map[string]string, len(ids))
+	isApex := make(map[string]bool, len(ids))
+	if len(ids) > 0 {
+		var rows []struct {
+			ID         string
+			Identifier string
+			Origin     string
+		}
+		h.db.WithContext(ctx).Table("sources").
+			Select("id, identifier, origin").Where("id IN ?", ids).Scan(&rows)
+		for _, r := range rows {
+			origin[r.ID] = r.Origin
+			if r.Identifier == "cf-apex-sub" {
+				isApex[r.ID] = true
+			}
+		}
+	}
+
+	return func(entry *cache.NodeCacheEntry) string {
+		if len(entry.SourceIDs) == 0 {
+			return "[免费]"
+		}
+		best, bestRank := "", -1
+		for _, id := range entry.SourceIDs {
+			if isApex[id] {
+				return "[CF]"
+			}
+			if r := originRank[origin[id]]; r > bestRank {
+				bestRank, best = r, origin[id]
+			}
+		}
+		switch best {
+		case "self-built":
+			if strings.Contains(entry.Raw, "ech-opts") {
+				return "[自建🔒]"
+			}
+			return "[自建]"
+		case "paid-airport":
+			return "[付费]"
+		case "public-airport":
+			return "[公益]"
+		case "free-list":
+			return "[一手]"
+		case "aggregator":
+			return "[聚合]"
+		case "wild":
+			return "[打野]"
+		}
+		return "[免费]"
+	}
+}
 func (h *Handler) subscriptionUserinfo() string {
 	var agg struct {
 		Upload   int64

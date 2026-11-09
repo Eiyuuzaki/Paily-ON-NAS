@@ -303,7 +303,8 @@ type CheckDeepResult struct {
 
 // CheckInitialResult defines model for CheckInitialResult.
 type CheckInitialResult struct {
-	LatencyMs int `json:"latency_ms"`
+	LatencyMs  int    `json:"latency_ms"`
+	FailReason string `json:"fail_reason,omitempty"`
 }
 
 // CheckLogEntry defines model for CheckLogEntry.

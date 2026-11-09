@@ -146,6 +146,7 @@ func (h *SearchHandler) SourceSearch(c *gin.Context) {
 				Info:       s.Info,
 				Status:     s.Status,
 				Type:       s.Type,
+				Origin:     s.Origin,
 			}
 			ok, err := filter.EvalBool(*req.Expr, env)
 			if err != nil {

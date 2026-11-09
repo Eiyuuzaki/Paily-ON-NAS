@@ -311,6 +311,7 @@ components:
       required: [latency_ms]
       properties:
         latency_ms: { type: integer }
+        fail_reason: { type: string }
 
     CheckDeepResult:
       type: object

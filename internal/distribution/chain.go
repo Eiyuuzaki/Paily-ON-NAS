@@ -31,6 +31,16 @@ func buildChainPlan(
 	entries []*cache.NodeCacheEntry,
 	render func(*cache.NodeCacheEntry, int, string) string,
 ) (map[int]string, []string) {
+	// chainPlanEnabled is a kill switch, not a bug: the CN relay hop relies on
+	// free domestic nodes, and when those go down every chained exit times out
+	// at once (2026-11-08: all 50 alive nodes -> timeout). Direct dialing is
+	// verified working, so the plan builder is bypassed until we have a
+	// reliable CN relay. Keeping the body intact documents the intended
+	// architecture and makes re-enabling a one-line change.
+	const chainPlanEnabled = false
+	if !chainPlanEnabled {
+		return nil, nil
+	}
 	if len(entries) == 0 || len(selected) == 0 {
 		return nil, nil
 	}

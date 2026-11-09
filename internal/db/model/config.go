@@ -44,4 +44,12 @@ var DefaultConfigs = map[string]string{
 	"filename_singbox":                 "Paily Connect.json",
 	"filename_base64":                  "Paily Connect.txt",
 	"profile_update_interval":          "24",
+	// ── Pool hygiene ────────────────────────────────────────────────────
+	// Ingress gate (internal/node.gateIncoming): free sources republish the
+	// same dead endpoints every round, so new entries are capped per
+	// server:port and per zero-yield protocol family.
+	"ingress_max_per_endpoint": "3",
+	"ingress_zero_yield_quota": "20",
+	// Retention for nodes that have never once passed a check. 0 disables.
+	"node_never_alive_retention_days": "3",
 }

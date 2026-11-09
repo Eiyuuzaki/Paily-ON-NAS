@@ -201,6 +201,7 @@ func previewSources(_ interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 			Info:       s.Info,
 			Status:     s.Status,
 			Type:       s.Type,
+			Origin:     s.Origin,
 		}
 		ok, err := filter.EvalBool(expression, env)
 		if err != nil {

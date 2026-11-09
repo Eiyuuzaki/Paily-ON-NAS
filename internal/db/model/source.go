@@ -16,6 +16,16 @@ type Source struct {
 	Status     string    `gorm:"not null;default:active"` // "active" | "dead"
 	IgnoreDead bool      `gorm:"not null;default:false"`
 
+	// Origin classifies where the nodes come from. Values:
+	//   self-built      自己的机器/账号（最高优先）
+	//   paid-airport    付费机场
+	//   public-airport  公益机场
+	//   free-list       免费一手维护者（根）
+	//   aggregator      二次聚合他人源（枝，可能纯重复）
+	//   wild            打野临时源（随时死）
+	// Distribution prefixes map 1:1: [自建]/[付费]/[公益]/[一手]/[聚合]/[打野]。
+	Origin string `gorm:"default:free-list"`
+
 	// 优先级：0=公益, 1=机场/付费, 2=最高
 	Priority int `gorm:"not null;default:0"`
 

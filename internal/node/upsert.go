@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -62,15 +63,6 @@ func (u *UpsertService) UpsertFromFetchResult(
 	}
 
 	// Parse incoming nodes.
-	type parsedNode struct {
-		hash     string
-		protocol string
-		server   string
-		port     int
-		password string
-		rawJSON  []byte
-	}
-
 	incoming := make([]parsedNode, 0, len(nodes))
 	for _, raw := range nodes {
 		var fields map[string]interface{}
@@ -91,6 +83,12 @@ func (u *UpsertService) UpsertFromFetchResult(
 			rawJSON:  compact,
 		})
 	}
+
+	// ── Ingress gate (B) ────────────────────────────────────────────────
+	// Free sources re-publish the same dead endpoints every round. Without a
+	// gate the pool grows without bound and the checker spends most of its
+	// budget re-probing nodes that have never once succeeded.
+	incoming = u.gateIncoming(ctx, incoming)
 
 	// Load existing mappings for this source.
 	var oldMappings []model.NodeSource
@@ -299,4 +297,140 @@ func strField(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// parsedNode is one node decoded from a fetch payload, ready for upsert.
+type parsedNode struct {
+	hash     string
+	protocol string
+	server   string
+	port     int
+	password string
+	rawJSON  []byte
+}
+
+// zeroYieldProtocols are protocols whose free-list entries have never passed
+// a single check in this deployment (observed n>=600, all i/o timeout at the
+// TCP layer). They are not rejected outright — a genuine revival would then
+// be invisible forever — but they are held to a small pool quota so one dead
+// protocol family cannot crowd out the probe budget.
+var zeroYieldProtocols = map[string]bool{
+	"ss": true, "ssr": true, "hysteria2": true, "socks5": true,
+	"tuic": true, "anytls": true, "wireguard": true,
+}
+
+func endpointKey(server string, port int) string {
+	return server + ":" + strconv.Itoa(port)
+}
+
+// gateIncoming applies the ingress cap described at the call site.
+// Ordering is preserved: nodes that already exist pass first, then new
+// entries are admitted until their endpoint or protocol quota is spent.
+func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode) []parsedNode {
+	if len(incoming) == 0 {
+		return incoming
+	}
+	maxPerEndpoint := readCfgInt(u.db, "ingress_max_per_endpoint", 3)
+	zeroQuota := readCfgInt(u.db, "ingress_zero_yield_quota", 20)
+	if maxPerEndpoint <= 0 {
+		maxPerEndpoint = 3
+	}
+
+	// Which of these hashes are already in the pool? Those are refreshes,
+	// not additions, and must never be dropped by a quota.
+	hashes := make([]string, 0, len(incoming))
+	for _, p := range incoming {
+		hashes = append(hashes, p.hash)
+	}
+	existing := make(map[string]struct{})
+	retired := make(map[string]struct{})
+	var rows []struct {
+		Hash       string
+		IsArchived bool
+	}
+	if err := u.db.WithContext(ctx).Model(&model.Node{}).
+		Select("hash, archived_at IS NOT NULL AS is_archived").
+		Where("hash IN ?", hashes).Scan(&rows).Error; err == nil {
+		for _, r := range rows {
+			if r.IsArchived {
+				retired[r.Hash] = struct{}{}
+			} else {
+				existing[r.Hash] = struct{}{}
+			}
+		}
+	}
+
+	// Current pool pressure, keyed the way the rules reason about it.
+	var epRows []struct {
+		Server string
+		Port   int
+		N      int
+	}
+	u.db.WithContext(ctx).Model(&model.Node{}).
+		Select("server, port, count(*) as n").Group("server, port").Scan(&epRows)
+	epCount := make(map[string]int, len(epRows))
+	for _, r := range epRows {
+		epCount[endpointKey(r.Server, r.Port)] = r.N
+	}
+	var protoRows []struct {
+		Protocol string
+		N        int
+	}
+	u.db.WithContext(ctx).Model(&model.Node{}).
+		Select("protocol, count(*) as n").Group("protocol").Scan(&protoRows)
+	protoCount := make(map[string]int, len(protoRows))
+	for _, r := range protoRows {
+		protoCount[r.Protocol] = r.N
+	}
+
+	out := make([]parsedNode, 0, len(incoming))
+	seen := make(map[string]struct{}, len(incoming))
+	droppedEP, droppedProto, droppedDup, droppedRetired := 0, 0, 0, 0
+	for _, p := range incoming {
+		if _, dup := seen[p.hash]; dup {
+			droppedDup++
+			continue
+		}
+		seen[p.hash] = struct{}{}
+		if _, ok := retired[p.hash]; ok {
+			droppedRetired++
+			continue
+		}
+		if _, ok := existing[p.hash]; ok {
+			out = append(out, p)
+			continue
+		}
+		if zeroYieldProtocols[p.protocol] && protoCount[p.protocol] >= zeroQuota {
+			droppedProto++
+			continue
+		}
+		k := endpointKey(p.server, p.port)
+		if epCount[k] >= maxPerEndpoint {
+			droppedEP++
+			continue
+		}
+		epCount[k]++
+		protoCount[p.protocol]++
+		out = append(out, p)
+	}
+	if droppedEP+droppedProto+droppedDup+droppedRetired > 0 {
+		log.Info().
+			Int("in", len(incoming)).Int("kept", len(out)).
+			Int("endpoint_cap", droppedEP).Int("protocol_quota", droppedProto).Int("dup", droppedDup).Int("retired", droppedRetired).
+			Msg("node upsert: ingress gate filtered")
+	}
+	return out
+}
+
+// readCfgInt reads an integer config value, falling back to def.
+func readCfgInt(db *gorm.DB, key string, def int) int {
+	var cfg model.Config
+	if err := db.Where("key = ?", key).First(&cfg).Error; err != nil {
+		return def
+	}
+	v, err := strconv.Atoi(cfg.Value)
+	if err != nil {
+		return def
+	}
+	return v
 }

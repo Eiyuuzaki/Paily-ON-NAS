@@ -36,6 +36,11 @@ type Node struct {
 	Score     float64   `gorm:"not null;default:0"` // float64 [0,1]; grade only at distribution time
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// ArchivedAt marks a node retired from probing. The row is kept so the
+	// unique hash index keeps blocking re-ingestion: sources republish the
+	// same dead endpoints every round, and a hard delete would re-admit them
+	// on the very next fetch.
+	ArchivedAt *time.Time `gorm:"index"`
 }
 
 // NodeSource is the many-to-many join table between nodes and sources.
@@ -50,7 +55,8 @@ type NodeInitialCheck struct {
 	NodeID     uuid.UUID `gorm:"type:uuid;not null;index"`
 	CheckRunID uuid.UUID `gorm:"type:uuid;not null;default:'00000000-0000-0000-0000-000000000000';index"`
 	CheckerTag string    `gorm:"not null;default:'default';index"`
-	LatencyMs  int       `gorm:"not null"` // -1 = dead
+	LatencyMs  int       `gorm:"not null"`            // -1 = dead
+	FailReason string    `gorm:"not null;default:''"` // dead reason: timeout/conn_refused/dns/tls_handshake/...
 	CheckedAt  time.Time `gorm:"not null"`
 }
 

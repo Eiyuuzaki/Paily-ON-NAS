@@ -17,13 +17,19 @@ const deleteBatchSize = 5000
 // Start launches a background goroutine that deletes expired history rows.
 // It runs immediately once on startup, then on the configured interval.
 // The goroutine exits when ctx is cancelled.
-func Start(ctx context.Context, db *gorm.DB) {
-	go run(ctx, db)
+// RebuildTrigger invalidates the in-memory node cache after rows change so a
+// distribution request cannot serve a node that cleanup just deleted.
+type RebuildTrigger interface {
+	TriggerRebuild(context.Context)
 }
 
-func run(ctx context.Context, db *gorm.DB) {
+func Start(ctx context.Context, db *gorm.DB, rebuild RebuildTrigger) {
+	go run(ctx, db, rebuild)
+}
+
+func run(ctx context.Context, db *gorm.DB, rebuild RebuildTrigger) {
 	// Initial run.
-	doCleanup(db)
+	doCleanup(db, rebuild)
 
 	for {
 		intervalMinutes := readConfigInt(db, "cleanup_interval_minutes", 30)
@@ -34,12 +40,12 @@ func run(ctx context.Context, db *gorm.DB) {
 			return
 		case <-ticker.C:
 			ticker.Stop()
-			doCleanup(db)
+			doCleanup(db, rebuild)
 		}
 	}
 }
 
-func doCleanup(db *gorm.DB) {
+func doCleanup(db *gorm.DB, rebuild RebuildTrigger) {
 	ctx := context.Background()
 	now := time.Now()
 
@@ -79,6 +85,25 @@ func doCleanup(db *gorm.DB) {
 		log.Warn().Err(err).Msg("cleanup: delete checker_runs failed")
 	} else if rows > 0 {
 		log.Info().Int64("rows", rows).Msg("cleanup: pruned checker_runs")
+	}
+
+	// ── Never-alive nodes ─────────────────────────────────────────────
+	// The ingress gate (internal/node.gateIncoming) stops new junk from
+	// entering, but the pool still holds whatever slipped in beforehand.
+	// A node that has never once passed a check within the retention
+	// window is dead weight: free-list entries either work when first
+	// seen or they never do (observed: 95% of dead nodes never succeeded).
+	neverAliveDays := readConfigInt(db, "node_never_alive_retention_days", 3)
+	if neverAliveDays > 0 {
+		archived, err := archiveNeverAliveNodes(ctx, db, now.AddDate(0, 0, -neverAliveDays))
+		if err != nil {
+			log.Warn().Err(err).Msg("cleanup: archive never-alive nodes failed")
+		} else if archived > 0 {
+			log.Info().Int64("rows", archived).Int("older_than_days", neverAliveDays).Msg("cleanup: archived never-alive nodes")
+			if rebuild != nil {
+				rebuild.TriggerRebuild(ctx)
+			}
+		}
 	}
 }
 
@@ -152,4 +177,26 @@ func readConfigInt(db *gorm.DB, key string, def int) int {
 		return def
 	}
 	return v
+}
+
+// archiveNeverAliveNodes retires nodes created before cutoff that have no
+// successful initial check on record. Rows are kept rather than deleted so the
+// unique hash index keeps blocking re-ingestion: free sources republish the same
+// dead endpoints every round, and a hard delete would only recycle them.
+func archiveNeverAliveNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) (int64, error) {
+	query := "UPDATE nodes SET archived_at = NOW() WHERE id IN (" +
+		"SELECT id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
+		" AND n.created_at < ? AND NOT EXISTS (SELECT 1 FROM node_initial_checks c" +
+		" WHERE c.node_id = n.id AND c.latency_ms <> -1) LIMIT ?)"
+	var total int64
+	for {
+		res := db.WithContext(ctx).Exec(query, cutoff, deleteBatchSize)
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < deleteBatchSize {
+			return total, nil
+		}
+	}
 }

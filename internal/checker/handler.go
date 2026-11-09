@@ -103,10 +103,11 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	// PostgreSQL only (see README: static builds ship without sqlite).
 	if err := h.db.WithContext(c.Request.Context()).Raw(`
 		SELECT * FROM nodes
-		WHERE alive = true
+		WHERE archived_at IS NULL
+		  AND (alive = true
 		   OR (SELECT count(*) FROM node_initial_checks WHERE node_id = nodes.id) < ?
 		   OR mod(abs(hashtext(id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
-	`, proofRounds, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
+	  )`, proofRounds, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -203,6 +204,9 @@ func (h *Handler) PostResults(c *gin.Context) {
 			return
 		}
 
+		// GeoIP enrichment for nodes without a region (best-effort, from server IP).
+		enrichRegionGeoIP(ctx, h.db, nodeIDs, regionUpdates)
+
 		// Apply region updates outside the transaction (best-effort).
 		h.applyRegionUpdates(ctx, regionUpdates)
 
@@ -260,6 +264,7 @@ func (h *Handler) buildCheckRecords(
 			CheckRunID: checkRunID,
 			CheckerTag: tag,
 			LatencyMs:  result.Initial.LatencyMs,
+			FailReason: result.Initial.FailReason,
 			CheckedAt:  now,
 		})
 
