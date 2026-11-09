@@ -6,6 +6,16 @@ import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '.
 import { formatBytes } from '../utils/format'
 import { copyText } from '../utils/clipboard'
 import TrafficSetupGuide from '../components/TrafficSetupGuide.vue'
+import {
+  getFailReasons,
+  getHealthTrend,
+  REASON_LABELS,
+  type FailReasonsResponse,
+  type HealthTrendResponse,
+} from '../api/observability'
+import VChart from 'vue-echarts'
+import 'echarts'
+import type { EChartsOption } from 'echarts'
 
 // 宽屏用 dialog 承载接入指引（避免展开面板把同 grid 行的卡片拉长），
 // 窄屏是单列布局，用 accordion 就地展开。
@@ -158,9 +168,107 @@ function onRangeChange(v: unknown) {
   fetchTraffic()
 }
 
+// ── 可观测性（失败原因分布 / 池子健康趋势）──────────────────────
+const obsHours = ref(48)
+const obsRanges = [
+  { title: '24h', value: 24 },
+  { title: '48h', value: 48 },
+  { title: '7天', value: 168 },
+]
+const obsLoading = ref(true)
+const failData = ref<FailReasonsResponse | null>(null)
+const trendData = ref<HealthTrendResponse | null>(null)
+
+async function fetchObservability() {
+  obsLoading.value = true
+  try {
+    const [f, t] = await Promise.all([
+      getFailReasons(obsHours.value),
+      getHealthTrend(obsHours.value),
+    ])
+    failData.value = f.data
+    trendData.value = t.data
+  } catch {
+    failData.value = null
+    trendData.value = null
+  } finally {
+    obsLoading.value = false
+  }
+}
+
+// MD3 容器色对应的固定 hex（echarts 不识别 vuetify token）
+const OBS_COLORS = { primary: '#6750A4', error: '#B3261E', warn: '#F9AE3D', success: '#3E9F5B', outline: '#938F99' }
+
+function reasonColor(code: string): string {
+  if (code === 'unknown') return OBS_COLORS.outline
+  if (code.includes('tls') || code.includes('refused')) return OBS_COLORS.error
+  if (code.includes('timeout')) return OBS_COLORS.warn
+  return OBS_COLORS.primary
+}
+
+const failOption = computed<EChartsOption>(() => {
+  const rows = [...(failData.value?.reasons || [])].reverse()
+  return {
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: 8, right: 44, top: 8, bottom: 4, containLabel: true },
+    xAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(147,143,153,0.18)' } }, axisLabel: { show: false } },
+    yAxis: {
+      type: 'category',
+      data: rows.map((r) => REASON_LABELS[r.reason] || r.reason),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 14,
+        data: rows.map((r) => ({
+          value: r.count,
+          itemStyle: { color: reasonColor(r.reason), borderRadius: [0, 4, 4, 0] as [number, number, number, number] },
+        })),
+        label: {
+          show: true,
+          position: 'right',
+          fontSize: 10,
+          formatter: (p: any) => {
+            const it = rows[p.dataIndex]
+            return it && it.pct > 0 ? `${it.pct}%` : ''
+          },
+        },
+      },
+    ],
+  }
+})
+
+const trendOption = computed<EChartsOption>(() => {
+  const runs = trendData.value?.runs || []
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['存活率', 'P50 延迟'], top: 0, itemWidth: 14, textStyle: { fontSize: 11 } },
+    grid: { left: 8, right: 8, top: 30, bottom: 4, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: runs.map((r) =>
+        new Date(r.completed_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' })
+      ),
+      axisLabel: { fontSize: 10 },
+    },
+    yAxis: [
+      { type: 'value', max: 100, axisLabel: { formatter: '{value}%', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(147,143,153,0.18)' } } },
+      { type: 'value', axisLabel: { formatter: '{value}ms', fontSize: 10 }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '存活率', type: 'line', smooth: true, symbolSize: 4, data: runs.map((r) => r.alive_pct), lineStyle: { color: OBS_COLORS.success }, itemStyle: { color: OBS_COLORS.success } },
+      { name: 'P50 延迟', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 4, data: runs.map((r) => r.p50_latency_ms), lineStyle: { color: OBS_COLORS.primary }, itemStyle: { color: OBS_COLORS.primary } },
+    ],
+  }
+})
+
 onMounted(() => {
   fetchStats()
   fetchTraffic()
+  fetchObservability()
 })
 </script>
 
@@ -406,6 +514,55 @@ onMounted(() => {
         </div>
       </div>
     </v-card>
+    <!-- 可观测性：失败原因分布 + 池子健康趋势（数据来自 checker 每轮结果） -->
+    <div class="obs-grid">
+      <v-card rounded="xl" class="obs-card">
+        <div class="card-head">
+          <span class="md3-title-medium">失败原因分布</span>
+          <v-spacer />
+          <span v-if="failData" class="md3-label-small text-disabled mr-2">
+            {{ failData.total_failures }} 次判死
+          </span>
+          <v-btn-toggle
+            :model-value="obsHours"
+            mandatory
+            density="compact"
+            variant="text"
+            divided
+            class="range-toggle md3-label-small"
+            @update:model-value="(v: any) => { obsHours = Number(v); fetchObservability() }"
+          >
+            <v-btn v-for="opt in obsRanges" :key="opt.value" :value="opt.value" size="x-small">
+              {{ opt.title }}
+            </v-btn>
+          </v-btn-toggle>
+        </div>
+        <div class="card-body">
+          <template v-if="obsLoading">
+            <v-skeleton-loader type="image" height="240" />
+          </template>
+          <template v-else-if="failData && failData.reasons.length">
+            <VChart :option="failOption" autoresize style="height: 240px" />
+          </template>
+          <div v-else class="obs-empty">暂无失败记录，测活轮次跑完自动出现</div>
+        </div>
+      </v-card>
+      <v-card rounded="xl" class="obs-card">
+        <div class="card-head">
+          <span class="md3-title-medium">池子健康趋势</span>
+        </div>
+        <div class="card-body">
+          <template v-if="obsLoading">
+            <v-skeleton-loader type="image" height="240" />
+          </template>
+          <template v-else-if="trendData && trendData.runs.length">
+            <VChart :option="trendOption" autoresize style="height: 240px" />
+          </template>
+          <div v-else class="obs-empty">还没有 check 轮次记录</div>
+        </div>
+      </v-card>
+    </div>
+
     <!-- 流量统计接入指引（宽屏用 dialog，避免把同 grid 行的卡片拉长） -->
     <v-dialog v-model="trafficHelpOpen" max-width="560" scrollable>
       <v-card rounded="xl">
@@ -624,6 +781,22 @@ onMounted(() => {
 .empty-sub {
   margin-top: 4px;
   color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ── 可观测性卡片 ── */
+.obs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.obs-empty {
+  height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: 13px;
 }
 
 /* ── 流量统计配置指引 ── */
