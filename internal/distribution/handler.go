@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"time"
 
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
@@ -18,6 +19,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/format"
 	node "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -68,6 +70,8 @@ func (h *Handler) Distribute(
 		filterMode = string(*params.FilterMode)
 	}
 
+	// Time-of-day alive rates for the current UTC hour (pre-aggregated by cleanup).
+	timeHealth := h.loadTimeHealth(context.Background())
 	var candidates []*cache.NodeCacheEntry
 	for _, e := range all {
 		// Entry-only nodes are relays, not exits: emitting them as standalone
@@ -93,6 +97,13 @@ func (h *Handler) Distribute(
 				if !nodeMatchesAnyUnlock(e, requestedUnlocks) {
 					continue
 				}
+			}
+		}
+		// Time-of-day filter: nodes with poor survival at this hour drop out.
+		// No row in node_time_health = no data = keep (never punish new nodes).
+		if len(timeHealth) > 0 {
+			if rate, ok := timeHealth[e.ID]; ok && rate < minHourlyAliveRate {
+				continue
 			}
 		}
 		candidates = append(candidates, e)
@@ -467,4 +478,34 @@ func contentTypeFor(formatName string) string {
 	default:
 		return "text/plain; charset=utf-8"
 	}
+}
+
+// minHourlyAliveRate is the minimum survival rate at the request hour for a
+// node to stay in the pool; nodes without any time-health rows are exempt.
+const minHourlyAliveRate = 0.5
+
+// loadTimeHealth returns nodeID → alive rate for the current UTC hour.
+func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]float64 {
+	hour := time.Now().UTC().Hour()
+	var rows []struct {
+		NodeID    uuid.UUID
+		AliveCount int
+		TotalCount int
+	}
+	if err := h.db.WithContext(ctx).Table("node_time_health").
+		Select("node_id, alive_count, total_count").Where("hour = ?", hour).
+		Scan(&rows).Error; err != nil {
+		return nil
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	m := make(map[uuid.UUID]float64, len(rows))
+	for _, r := range rows {
+		if r.TotalCount <= 0 {
+			continue
+		}
+		m[r.NodeID] = float64(r.AliveCount) / float64(r.TotalCount)
+	}
+	return m
 }

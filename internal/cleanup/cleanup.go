@@ -9,6 +9,7 @@ import (
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/rs/zerolog/log"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -105,6 +106,49 @@ func doCleanup(db *gorm.DB, rebuild RebuildTrigger) {
 			}
 		}
 	}
+
+	// ── Time-of-day health aggregation ─────────────────────────────
+	// Pre-aggregate per-hour alive rates (7-day window) so the
+	// distribution hot path never aggregates node_initial_checks.
+	if err := refreshTimeHealth(ctx, db); err != nil {
+		log.Warn().Err(err).Msg("cleanup: refresh time health failed")
+	}
+}
+
+// refreshTimeHealth recomputes node_time_health from the last 7 days of
+// initial checks, bucketed by the UTC hour of checked_at. Full refresh:
+// small table (nodes x 24) and correctness beats incrementality here.
+func refreshTimeHealth(ctx context.Context, db *gorm.DB) error {
+	var rows []struct {
+		NodeID     uuid.UUID
+		Hour       int
+		AliveCount int64
+		TotalCount int64
+	}
+	err := db.WithContext(ctx).Table("node_initial_checks").
+		Select("node_id, EXTRACT(hour FROM checked_at)::int AS hour, " +
+			"COUNT(*) FILTER (WHERE latency_ms > 0) AS alive_count, COUNT(*) AS total_count").
+		Where("checked_at > ?", time.Now().AddDate(0, 0, -7)).
+		Group("node_id, hour").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM node_time_health").Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		now := time.Now()
+		recs := make([]model.NodeTimeHealth, 0, len(rows))
+		for _, r := range rows {
+			recs = append(recs, model.NodeTimeHealth{NodeID: r.NodeID, Hour: r.Hour,
+				AliveCount: int(r.AliveCount), TotalCount: int(r.TotalCount), UpdatedAt: now})
+		}
+		return tx.CreateInBatches(recs, 1000).Error
+	})
 }
 
 func deleteOldUintRows[T any](ctx context.Context, db *gorm.DB, timeColumn string, cutoff time.Time) (int64, error) {

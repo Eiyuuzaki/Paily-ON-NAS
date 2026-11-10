@@ -113,6 +113,7 @@ func autoMigrate(db *gorm.DB) error {
 		&model.FormatConfig{},
 		&model.CheckerRun{},
 		&model.NodeTagScore{},
+		&model.NodeTimeHealth{},
 	)
 }
 
