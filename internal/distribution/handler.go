@@ -520,7 +520,7 @@ func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]float64 {
 // readDBConfigInt reads a named key from the configs table as an integer.
 func readDBConfigInt(ctx context.Context, db *gorm.DB, key string, defaultVal int) int {
 	var cfg model.Config
-	if err := db.WithContext(ctx).Where("`key` = ?", key).First(&cfg).Error; err != nil {
+	if err := db.WithContext(ctx).Where("key = ?", key).First(&cfg).Error; err != nil {
 		return defaultVal
 	}
 	v, err := strconv.Atoi(cfg.Value)

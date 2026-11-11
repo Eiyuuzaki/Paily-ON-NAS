@@ -17,6 +17,13 @@ type Generator struct {
 	items []map[string]any
 }
 
+// SetECHEnabled toggles whether sbTLS injects ECH into TLS outbounds.
+// sbTLS reads the package-level echEnabled var because it is a free function
+// called from four outbound builders; distribution generates one format at a
+// time so the package-level toggle is de-facto per-request.
+// Implements the interface distribution/handler probes for.
+func (g *Generator) SetECHEnabled(v bool) { echEnabled = v }
+
 var _ format.FormatGenerator = (*Generator)(nil)
 
 // skipTypes are protocol types unsupported by sing-box, rejected unconditionally.
