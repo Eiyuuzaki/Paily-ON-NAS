@@ -91,11 +91,21 @@ func readConfigInt(db *gorm.DB, key string, defaultVal int) int {
 func (h *Handler) GetNodes(c *gin.Context) {
 	proofRounds := readConfigInt(h.db, "check_dead_proof_rounds", 4)
 	sweepSlots := readConfigInt(h.db, "check_dead_sweep_slots", 12)
+	// deadGraceMin keeps recently-dead nodes on the full-probe list for a
+	// grace window (default 6h = ~3 checker rounds at the 2h cron). Without
+	// this a single timeout verdict drops the node to the 1/12 sweep for the
+	// rest of its life, and transient failures (CGNAT route flip, cold ECH
+	// handshake, CDN hiccup) become permanent silent death. See AGENTS.md
+	// 2026-11-11: HidenCloud app2301 was alive the whole time but invisible.
+	deadGraceMin := readConfigInt(h.db, "check_dead_grace_minutes", 360)
 	if proofRounds < 1 {
 		proofRounds = 1
 	}
 	if sweepSlots < 1 {
 		sweepSlots = 1
+	}
+	if deadGraceMin < 0 {
+		deadGraceMin = 0
 	}
 
 	var nodes []model.Node
@@ -107,7 +117,10 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		  AND (alive = true
 		   OR (SELECT count(*) FROM node_initial_checks WHERE node_id = nodes.id) < ?
 		   OR mod(abs(hashtext(id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
-	  )`, proofRounds, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
+		   OR EXISTS (SELECT 1 FROM node_initial_checks
+		      WHERE node_id = nodes.id AND latency_ms = -1
+		      AND checked_at > now() - make_interval(mins => ?))
+	  )`, proofRounds, sweepSlots, sweepSlots, deadGraceMin).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
