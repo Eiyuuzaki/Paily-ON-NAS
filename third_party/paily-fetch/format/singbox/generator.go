@@ -140,7 +140,19 @@ func (g *Generator) Push(n *node.ProxyNode, name string) {
 func (g *Generator) Generate(cfg format.FormatConfig) ([]byte, error) {
 	c := parseConfig(cfg)
 	if c.Template == "" {
-		out := map[string]any{"outbounds": g.items}
+		out := map[string]any{
+			"outbounds": g.items,
+			// sing-box 1.12+ deprecates dialing a domain without an explicit
+			// resolver, and 1.14 turns that into a startup error. ECH lookup
+			// also needs DNS: the ECHConfigList lives in the HTTPS record.
+			"dns": map[string]any{
+				"servers": []any{
+					map[string]any{"tag": "dns-local", "type": "udp", "server": "223.5.5.5"},
+				},
+				"final": "dns-local",
+			},
+			"route": map[string]any{"default_domain_resolver": "dns-local"},
+		}
 		data, err := json.Marshal(out)
 		if err != nil {
 			return nil, fmt.Errorf("singbox generator: json.Marshal: %w", err)

@@ -19,6 +19,7 @@ import (
 type Generator struct {
 	items       []map[string]any
 	regionNames map[string][]string
+	echEnabled  bool // default true; set false via SetECHEnabled to strip ech-opts from output
 }
 
 var _ format.FormatGenerator = (*Generator)(nil)
@@ -32,7 +33,36 @@ func (g *Generator) Push(n *node.ProxyNode, name string) {
 	if name != "" {
 		entry["name"] = name
 	}
+	injectECH(entry, g.echEnabled)
 	g.items = append(g.items, entry)
+}
+
+// injectECH adds mihomo ech-opts to TLS proxies so the SNI travels encrypted.
+// GFW runs a periodic SNI blocklist (see AGENTS.md 2026-11-11): once a domain
+// lands on it every plaintext-SNI handshake to any IP gets RST, which is how
+// the whole dpdns.org fleet died. REALITY is excluded - it intentionally
+// presents a plaintext SNI to impersonate a real site, and mihomo rejects the
+// combination. With enable:true and no pinned config mihomo fetches the
+// ECHConfigList from the DNS HTTPS record at connect time.
+// SetECHEnabled toggles whether injectECH adds ech-opts to TLS proxies.
+// Defaults to true; call with false to emit configs without ECH for
+// clients that cannot handle it.
+func (g *Generator) SetECHEnabled(v bool) { g.echEnabled = v }
+
+func injectECH(entry map[string]any, enabled bool) {
+	if !enabled {
+		return
+	}
+	if entry["tls"] != true {
+		return
+	}
+	if _, isReality := entry["reality-opts"]; isReality {
+		return
+	}
+	if _, already := entry["ech-opts"]; already {
+		return
+	}
+	entry["ech-opts"] = map[string]any{"enable": true}
 }
 
 // PushWithRegion appends a proxy entry and tracks it under region for auto groups.

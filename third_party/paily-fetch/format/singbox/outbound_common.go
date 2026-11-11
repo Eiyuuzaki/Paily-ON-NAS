@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// echEnabled controls whether sbTLS injects ECH into TLS outbounds.
+var echEnabled = true
+
 // ─── clash map accessors ──────────────────────────────────────────────────────
 
 // clashStr returns the string value for key in m, or "" if absent or wrong type.
@@ -98,8 +101,23 @@ func sbTLS(clash map[string]any, sniKey string) map[string]any {
 	if fp := clashStr(clash, "client-fingerprint"); fp != "" {
 		tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
 	}
-	if ech := clashStr(clash, "ech"); ech != "" {
-		tls["ech"] = map[string]any{"enabled": true, "config": []string{ech}}
+	// ECH and REALITY are mutually exclusive: REALITY impersonates a real site
+	// by presenting its certificate for a plaintext SNI, while ECH encrypts that
+	// SNI. sing-box rejects the combination outright with
+	// "Reality is conflict with ECH", so REALITY nodes must stay unencrypted.
+	isReality := clashMap(clash, "reality-opts") != nil
+	if !isReality && echEnabled {
+		if ech := clashStr(clash, "ech"); ech != "" {
+			// Explicit ECHConfigList supplied by the node payload: pin it.
+			tls["ech"] = map[string]any{"enabled": true, "config": []string{ech}}
+		} else {
+			// No pinned config: let sing-box fetch the ECHConfigList from the
+			// DNS HTTPS record at connect time. Requires the generated config to
+			// declare a DNS server + route.default_domain_resolver (see generator).
+			// Without ECH the SNI stays in plaintext, which is exactly what a
+			// censoring middlebox matches on - see AGENTS.md 2026-11-11.
+			tls["ech"] = map[string]any{"enabled": true}
+		}
 	}
 	// Reality options
 	if ro := clashMap(clash, "reality-opts"); ro != nil {
@@ -184,9 +202,12 @@ func sbTransport(clash map[string]any) map[string]any {
 			if authority := clashStr(grpcOpts, "grpc-authority"); authority != "" {
 				t["authority"] = authority
 			}
-			if mode := clashStr(grpcOpts, "grpc-mode"); mode != "" {
-				t["mode"] = mode
-			}
+			// sing-box has no grpc "mode": the transport always uses the
+			// gun-style bidirectional stream, unlike clash/xray where
+			// grpc-mode can be "gun" or "multi". Emitting the field makes
+			// sing-box 1.14+ reject the whole config with
+			// `transport.mode: json: unknown field "mode"`.
+			_ = clashStr(grpcOpts, "grpc-mode")
 		}
 		return t
 
