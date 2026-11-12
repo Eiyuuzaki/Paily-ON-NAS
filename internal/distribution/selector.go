@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/naming"
@@ -31,6 +33,87 @@ func commonRegionSet() map[string]bool {
 	return m
 }
 
+// perEgressCap bounds how many distributed nodes may share one egress
+// identity. Without it, N entry IPs that all terminate on the same Worker
+// are shipped as N distinct nodes: the client then health-checks all of
+// them (url-test) and the checker probes all of them, and both draw from
+// the Worker's single daily request quota. Measured 2026-11-13: 272 CF
+// entry IPs -> one cfnew Worker exhausted its free 100k/day budget and
+// every one of them went 429 at once. 0 disables the cap.
+var perEgressCap atomic.Int32
+
+// DefaultPerEgressMax is how many nodes share one egress by default.
+const DefaultPerEgressMax = 16
+
+func init() { perEgressCap.Store(DefaultPerEgressMax) }
+
+// SetPerEgressCap updates the cap (0 = unlimited). Called by the handler
+// after reading distribute_per_egress_max from the configs table.
+func SetPerEgressCap(n int) {
+	if n < 0 {
+		n = 0
+	}
+	perEgressCap.Store(int32(n))
+}
+
+// egressIdentity collapses nodes that resolve to the same upstream service.
+// Only the "dial a bare IP, present a shared SNI" shape is collapsed: that
+// is the CDN/Worker multi-entry pattern where hundreds of addresses are just
+// entry points into one backend. Nodes whose server is a domain are left
+// alone, because a domain normally identifies its own service (airport
+// nodes reusing e.g. www.bing.com as a decoy SNI stay distinct).
+func egressIdentity(e *cache.NodeCacheEntry) string {
+	if e.ProxyNode != nil {
+		m := e.ProxyNode.ClashMap()
+		sni, _ := m["servername"].(string)
+		if sni == "" {
+			sni, _ = m["sni"].(string)
+		}
+		if sni != "" && net.ParseIP(e.Server) != nil {
+			return "sni:" + sni
+		}
+	}
+	return "srv:" + e.Server
+}
+
+// capByEgress keeps at most perEgressCap nodes per egress identity,
+// preferring the highest-scoring ones. Input order is preserved otherwise.
+func capByEgress(entries []*cache.NodeCacheEntry) []*cache.NodeCacheEntry {
+	limit := int(perEgressCap.Load())
+	if limit <= 0 || len(entries) == 0 {
+		return entries
+	}
+	// Group by egress identity, keeping the best-scoring members so the cap
+	// drops weak entry points rather than whichever happen to come last.
+	groups := make(map[string][]*cache.NodeCacheEntry, 16)
+	order := make([]string, 0, 16)
+	for _, e := range entries {
+		key := egressIdentity(e)
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], e)
+	}
+	keep := make(map[*cache.NodeCacheEntry]bool, len(entries))
+	for _, key := range order {
+		g := groups[key]
+		if len(g) > limit {
+			sort.SliceStable(g, func(i, j int) bool { return g[i].Score > g[j].Score })
+			g = g[:limit]
+		}
+		for _, e := range g {
+			keep[e] = true
+		}
+	}
+	out := make([]*cache.NodeCacheEntry, 0, len(keep))
+	for _, e := range entries {
+		if keep[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // SelectWithPreset is the main entry point for node selection.
 //
 //   - preset "common": HK/TW/SG/US/JP priority, fill from other then UN
@@ -46,6 +129,9 @@ func SelectWithPreset(entries []*cache.NodeCacheEntry, maxDistribute int, preset
 	if len(entries) == 0 || maxDistribute <= 0 {
 		return nil
 	}
+	// Collapse duplicate entry points before any quota math: a single Worker
+	// fronted by hundreds of IPs must not consume hundreds of client slots.
+	entries = capByEgress(entries)
 
 	// Split by priority tier.
 	var tier1, tier0 []*cache.NodeCacheEntry

@@ -128,6 +128,11 @@ func (h *Handler) Distribute(
 	}
 	maxDistribute := configInt(h.db, "max_distribute", 200)
 	priorityRatio := configFloat(h.db, "priority_ratio", 0.6)
+	// Cap how many nodes may share one egress (same Worker behind many entry
+	// IPs). Each extra entry point costs a client url-test probe and a checker
+	// probe against the same daily request budget, so shipping hundreds of
+	// them burns the quota without adding redundancy users can perceive.
+	SetPerEgressCap(configInt(h.db, "distribute_per_egress_max", DefaultPerEgressMax))
 	selected := SelectWithPreset(candidates, maxDistribute, preset, priorityRatio)
 
 	log.Debug().
