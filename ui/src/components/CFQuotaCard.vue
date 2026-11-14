@@ -13,7 +13,7 @@ const SEGS = ['split-airport', 'split-free']
 const DOTS = ['dot-airport', 'dot-free']
 
 const rows = computed(() => {
-  const out: { name: string; used: number; pct: number; segClass: string; dotClass: string; unknown: boolean }[] = []
+  const out: { name: string; used: number; pct: number; pctOfAccount: number; segClass: string; dotClass: string; unknown: boolean }[] = []
   let i = 0
   for (const a of accounts.value) {
     const u = usageMap.value[a.id]
@@ -22,15 +22,21 @@ const rows = computed(() => {
     out.push({
       name: a.name,
       used,
-      pct: Math.min(100, Math.round(used / 1000) / 10),
+      pct: 0,
+      pctOfAccount: Math.min(100, Math.round(used / 100) / 10),
       segClass: SEGS[i % SEGS.length],
       dotClass: DOTS[i % DOTS.length],
       unknown,
     })
     i++
   }
-  return out.sort((x, y) => y.pct - x.pct)
+  const tq = out.length * 100000
+  for (const r of out) r.pct = Math.min(100, Math.round(r.used / tq * 1000) / 10)
+  return out.sort((x, y) => y.used - x.used)
 })
+
+// 总配额 = 每号 100k × 号数；条的总宽代表总配额池，每段宽 = 该号已用/总配额
+const totalQuota = computed(() => accounts.value.length * 100000)
 
 const resetText = computed(() => {
   const now = new Date()
@@ -46,10 +52,12 @@ async function fetchData() {
   accounts.value = acc.data.data
   loaded.value = true
   for (const a of accounts.value) {
-    try {
-      const u = await getAccountUsage(a.id)
-      usageMap.value[a.id] = (u.data as Record<string, unknown>).total_today as number ?? -1
-    } catch (e) { console.warn('[CFQuotaCard] usage', a.name, e instanceof Error ? e.message : e); usageMap.value[a.id] = -1 }
+    let u: Awaited<ReturnType<typeof getAccountUsage>> | null = null
+    for (let k = 0; k < 2; k++) {
+      try { u = await getAccountUsage(a.id); break }
+      catch (e) { console.warn('[CFQuotaCard] usage', a.name, 'attempt', k, e instanceof Error ? e.message : e) }
+    }
+    usageMap.value[a.id] = u ? ((u.data as Record<string, unknown>).total_today as number ?? -1) : -1
   }
 }
 
@@ -76,7 +84,12 @@ onMounted(async () => {
     <div class="card-body">
       <div class="split-bar">
         <div v-for="r in rows" :key="r.name" class="split-seg" :class="r.segClass"
-             :style="{ width: r.pct + '%', minWidth: '18px', borderRadius: '6px' }" />
+             :style="{ width: r.pct + '%' }" />
+      </div>
+      <!-- 配额轴标：0 → 单号完整配额 100k -->
+      <div class="bar-axis md3-label-small">
+        <span>0</span>
+        <span>{{ totalQuota.toLocaleString() }}</span>
       </div>
       <div class="split-legend" v-if="rows.length">
         <div class="legend-item" v-for="r in rows" :key="r.name">
@@ -84,7 +97,7 @@ onMounted(async () => {
           <div>
             <div class="md3-label-medium legend-name">{{ r.name }} 号</div>
             <div class="md3-title-large legend-val">{{ r.unknown ? '—' : r.used.toLocaleString() }}</div>
-            <div class="md3-body-small legend-pct">{{ r.pct }}%</div>
+            <div class="md3-body-small legend-pct">{{ r.pctOfAccount }}% · 剩余 {{ r.unknown ? '—' : (100000 - r.used).toLocaleString() }}</div>
           </div>
         </div>
       </div>
@@ -94,9 +107,6 @@ onMounted(async () => {
       <v-divider class="my-3" />
       <div class="md3-body-medium" style="color: rgb(var(--v-theme-on-surface))">
         存活节点 {{ alive ?? '—' }} / {{ total ?? '—' }} · 探测与实际流量共用配额
-      </div>
-      <div class="md3-body-small" style="margin-top: 10px; color: rgb(var(--v-theme-on-surface-variant))">
-        剩余配额<template v-for="r in rows" :key="r.name"><span style="color: rgb(var(--v-theme-on-surface)); font-weight: 500">&nbsp;{{ r.name }} {{ r.unknown ? '—' : (100000 - r.used).toLocaleString() }}</span></template>
       </div>
     </div>
   </v-card>
@@ -127,6 +137,12 @@ onMounted(async () => {
 }
 .split-free {
   background: rgb(var(--v-theme-tertiary));
+}
+.bar-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 .split-legend {
   display: flex;
@@ -175,4 +191,3 @@ onMounted(async () => {
 }
 
 </style>
-
