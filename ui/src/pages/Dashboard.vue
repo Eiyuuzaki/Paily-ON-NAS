@@ -6,6 +6,7 @@ import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '.
 import { formatBytes } from '../utils/format'
 import { copyText } from '../utils/clipboard'
 import TrafficSetupGuide from '../components/TrafficSetupGuide.vue'
+import CFQuotaCard from '../components/CFQuotaCard.vue'
 import {
   getFailReasons,
   getHealthTrend,
@@ -331,7 +332,7 @@ onMounted(() => {
         <div class="card-head">
           <v-icon icon="mdi-chart-donut" size="20" class="mr-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
           <span class="md3-title-medium">节点存活率</span>
-        </div>
+</div>
         <div class="ring-wrap">
           <v-progress-circular
             :model-value="aliveRatio"
@@ -431,7 +432,7 @@ onMounted(() => {
             <div class="total-row md3-body-medium">
               <span class="total-label">合计</span>
               <span class="total-val">
-                上传 {{ formatBytes(traffic.total_upload) }} · 下载 {{ formatBytes(traffic.total_download) }}
+                上传 {{ formatBytes(traffic?.total_upload ?? 0) }} · 下载 {{ formatBytes(traffic?.total_download ?? 0) }}
               </span>
             </div>
 
@@ -474,6 +475,8 @@ onMounted(() => {
           </div>
         </div>
       </v-card>
+
+      <CFQuotaCard />
     </div>
 
     <!-- 订阅链接 -->
@@ -514,7 +517,7 @@ onMounted(() => {
         </div>
       </div>
     </v-card>
-    <!-- 可观测性：失败原因分布 + 池子健康趋势（数据来自 checker 每轮结果） -->
+        <!-- 可观测性：失败原因分布 + 池子健康趋势（数据来自 checker 每轮结果） -->
     <div class="obs-grid">
       <v-card rounded="xl" class="obs-card">
         <div class="card-head">
@@ -550,7 +553,7 @@ onMounted(() => {
       <v-card rounded="xl" class="obs-card">
         <div class="card-head">
           <span class="md3-title-medium">池子健康趋势</span>
-        </div>
+</div>
         <div class="card-body">
           <template v-if="obsLoading">
             <v-skeleton-loader type="image" height="240" />
@@ -644,9 +647,17 @@ onMounted(() => {
 /* ── 详情两列 ── */
 .detail-grid {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
+  grid-template-columns: 1fr 1.4fr 1fr;
   gap: 16px;
   margin-top: 16px;
+}
+@media (max-width: 1200px) {
+  .detail-grid {
+    grid-template-columns: 1fr 1.4fr;
+  }
+  .detail-grid > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 @media (max-width: 960px) {
   .detail-grid {

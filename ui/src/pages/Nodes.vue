@@ -5,6 +5,8 @@ import ExprEditor from '../components/ExprEditor.vue'
 import NodeDetailDrawer from '../components/NodeDetailDrawer.vue'
 import SourceDetailDrawer from '../components/SourceDetailDrawer.vue'
 import { getNodes, searchNodes, deleteNode } from '../api/nodes'
+import { rawToShareUri } from '../utils/share'
+import { getNode } from '../api/nodes'
 import { getCheckers } from '../api/checkers'
 import type { NodeSummary, NodeListResponse } from '../types/api'
 import { formatLatency } from '../utils/format'
@@ -126,12 +128,42 @@ const headers = [
   { title: '延迟', key: 'latency', minWidth: 140, sortable: false },
   { title: '分数', key: 'score', minWidth: 170 },
   { title: '状态', key: 'alive', minWidth: 90 },
-  { title: '操作', key: 'actions', minWidth: 130, sortable: false, align: 'end' as const },
+  { title: '操作', key: 'actions', minWidth: 170, sortable: false, align: 'end' as const },
 ]
 
 const scoreColor = (s: number) => (s >= 0.6 ? 'success' : s >= 0.3 ? 'warning' : 'error')
 
 const pageOptions = [20, 50, 100]
+
+async function getShareUri(id: string): Promise<string> {
+  try {
+    const res = await getNode(id)
+    const raw = (res.data as unknown as Record<string, unknown>).raw
+    return rawToShareUri(raw as string | Record<string, unknown>)
+  } catch { return '' }
+}
+
+async function copyShare(item: { id: string }) {
+  // 列表接口不含 raw，按需拉详情
+  const uri = await getShareUri(item.id)
+  if (!uri) { alert('仅支持 vless/trojan 节点导出'); return }
+  // http 内网非 secure context 无 navigator.clipboard，降级 execCommand
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(uri)
+    window.dispatchEvent(new CustomEvent('paily-notify', { detail: '节点链接已复制' }))
+    return
+  }
+  const ta = document.createElement('textarea')
+  ta.value = uri
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch { ok = false }
+  document.body.removeChild(ta)
+  window.dispatchEvent(new CustomEvent('paily-notify', { detail: ok ? '节点链接已复制' : '复制失败，请手动复制' }))
+}
 
 onMounted(async () => {
   fetchNodes()
@@ -319,6 +351,7 @@ onMounted(async () => {
         </template>
 
         <template #item.actions="{ item }">
+          <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="primary" title="复制节点链接" @click="copyShare(item)" />
           <v-btn icon="mdi-eye-outline" size="x-small" variant="text" color="primary" title="详情" @click="openDetail(item)" />
           <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error" title="删除" @click="handleDelete(item)" />
         </template>

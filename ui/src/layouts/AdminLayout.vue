@@ -41,6 +41,15 @@ function onApiError(e: Event) {
 onMounted(() => window.addEventListener('paily-api-error', onApiError))
 onUnmounted(() => window.removeEventListener('paily-api-error', onApiError))
 
+// 通用成功提示（复制成功等），复用同一 snackbar
+const apiOk = ref<string | null>(null)
+function onApiOk(e: Event) {
+  apiOk.value = (e as CustomEvent).detail || '已完成'
+  setTimeout(() => (apiOk.value = null), 2500)
+}
+onMounted(() => window.addEventListener('paily-notify', onApiOk))
+onUnmounted(() => window.removeEventListener('paily-notify', onApiOk))
+
 watch(
   () => settings.theme,
   (t) => theme.change(t),
@@ -60,6 +69,7 @@ const menuItems = [
   { path: '/filter', title: '过滤测试台', icon: 'mdi-filter-outline' },
   { path: '/config', title: '运行时配置', icon: 'mdi-cog-outline' },
   { path: '/format-configs', title: '格式配置', icon: 'mdi-file-code-outline' },
+  { path: '/cf', title: 'CF 模块', icon: 'mdi-cloud-outline' },
   { path: '/logs', title: '日志', icon: 'mdi-text-box-outline' },
   { path: '/about', title: '关于', icon: 'mdi-information-outline' },
 ]
@@ -177,11 +187,14 @@ const menuItems = [
     </v-container>
   </v-main>
 
-  <v-snackbar v-model="apiError" :timeout="3000" color="error" location="bottom" rounded="lg">
+  <v-snackbar :model-value="apiError !== null" :timeout="3000" color="error" location="bottom" rounded="lg" @update:model-value="(v: boolean) => { if (!v) apiError = null }">
     {{ apiError }}
     <template #actions>
       <v-btn variant="text" @click="apiError = null">关闭</v-btn>
     </template>
+  </v-snackbar>
+  <v-snackbar :model-value="apiOk !== null" :timeout="2500" color="success" location="bottom" rounded="lg" @update:model-value="(v: boolean) => { if (!v) apiOk = null }">
+    {{ apiOk }}
   </v-snackbar>
 </template>
 

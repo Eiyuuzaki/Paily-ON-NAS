@@ -64,6 +64,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../pages/Logs.vue'),
       },
       {
+        path: 'cf',
+        name: 'CFPanel',
+        component: () => import('../pages/CFPanel.vue'),
+      },
+      {
         path: 'about',
         name: 'About',
         component: () => import('../pages/About.vue'),

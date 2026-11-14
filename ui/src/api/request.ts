@@ -15,19 +15,29 @@ request.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
+// 刷新接口自身也可能返回 401。若它也进入下面的自动刷新分支，就会无限递归，
+// 所以这里显式跳过，并用 single-flight 锁合并并发刷新。
+const REFRESH_PATH = '/api/v1/auth/refresh'
+let refreshInFlight: Promise<void> | null = null
+
 request.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: any) => {
-    if (error.response?.status === 401 && !error.config._retry) {
-      error.config._retry = true
+    const cfg = error.config
+    const isRefreshCall = typeof cfg?.url === 'string' && cfg.url.includes(REFRESH_PATH)
+    if (error.response?.status === 401 && cfg && !cfg._retry && !isRefreshCall) {
+      cfg._retry = true
       try {
-        const authStore = useAuthStore()
-        await authStore.refreshAccessToken()
-        error.config.headers.Authorization = `Bearer ${useAuthStore().accessToken}`
-        return request(error.config)
+        if (!refreshInFlight) {
+          refreshInFlight = useAuthStore().refreshAccessToken().finally(() => {
+            refreshInFlight = null
+          })
+        }
+        await refreshInFlight
+        cfg.headers.Authorization = `Bearer ${useAuthStore().accessToken}`
+        return request(cfg)
       } catch {
-        const authStore = useAuthStore()
-        authStore.logout()
+        useAuthStore().logout()
         return Promise.reject(error)
       }
     }

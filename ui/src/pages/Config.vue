@@ -103,7 +103,7 @@ async function loadConfig() {
 function validate(): boolean {
   const fh = Number(localConfig['fetch_history_window_days'])
   const fd = Number(localConfig['fetch_dead_window_days'])
-  const ih = Number(localConfig['initial_check_history_days'])
+  const ih = Number(localConfig['check_run_history_days'])
   const nd = Number(localConfig['node_dead_window_days'])
 
   if (!isNaN(fh) && !isNaN(fd) && fh < fd) {
@@ -111,7 +111,7 @@ function validate(): boolean {
     return false
   }
   if (!isNaN(ih) && !isNaN(nd) && ih < nd) {
-    showSnack('初步检测历史保留天数必须 ≥ 节点死亡判定天数', 'error')
+    showSnack('Checker 提交历史保留天数必须 ≥ 节点死亡判定天数', 'error')
     return false
   }
   return true
@@ -121,8 +121,10 @@ async function saveConfig() {
   if (!validate()) return
   saving.value = true
   try {
+    // 后端 PUT /config 绑定 map[string]string：滑杆是 v-model.number，
+    // 直接发送会得到 number，请求体在绑定阶段就会 400。统一转字符串。
     const payload: ConfigMap = {}
-    for (const k of serverKeys.value) payload[k] = localConfig[k] ?? ''
+    for (const k of serverKeys.value) payload[k] = String(localConfig[k] ?? '')
     await updateConfig(payload)
     showSnack('配置已保存')
   } finally {

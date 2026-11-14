@@ -1,6 +1,7 @@
 import { createApp, h } from 'vue'
 import { createPinia } from 'pinia'
 import { createVuetify } from 'vuetify'
+import type { IconSet } from 'vuetify'
 import 'vuetify/styles'
 import './style.css'
 import App from './App.vue'
@@ -14,9 +15,10 @@ import { md3Light, md3Dark } from './plugins/md3-theme'
 //
 // 注意：path 必须显式设置 fill="currentColor"，否则浏览器默认 fill 是黑色，
 // 在暗色主题下黑图标几乎不可见（浅色主题下也能看见，所以容易漏掉）。
-const mdiSvgSet = {
-  component: (props: { icon: string }) => {
-    const path = mdiIcons[props.icon]
+const mdiSvgSet: IconSet = {
+  component: (props) => {
+    const icon = props.icon
+    const path = typeof icon === 'string' ? mdiIcons[icon] : undefined
     if (!path) return null
     return h(
       'svg',
