@@ -31,8 +31,12 @@ func TestBuildChainPlan_NoEntriesIsFlat(t *testing.T) {
 	}
 }
 
-// Every non-CN exit gets a relay; a CN exit never does (it is the first hop).
-func TestBuildChainPlan_AssignsExitsOnly(t *testing.T) {
+// Chain plan is currently DISABLED: buildChainPlan returns nil early because a
+// chain through an unreliable CN relay made every node time out (see AGENTS.md
+// §5 "分发系统 chain plan"). This test pins that disabled state so the change
+// cannot be undone by accident. Restore the relay-assignment assertions when
+// the feature is re-enabled with a dependable entry node.
+func TestBuildChainPlan_Disabled(t *testing.T) {
 	sel := []SelectedNode{
 		{Entry: entry("CN", "cn1"), SeqNo: 1},
 		{Entry: entry("DE", "de1"), SeqNo: 1},
@@ -40,32 +44,23 @@ func TestBuildChainPlan_AssignsExitsOnly(t *testing.T) {
 	}
 	entries := []*cache.NodeCacheEntry{entry("CN", "cn1")}
 	plan, names := buildChainPlan(context.Background(), sel, entries, renderStub)
-
-	if len(names) != 1 {
-		t.Fatalf("want 1 entry name, got %v", names)
-	}
-	if _, ok := plan[0]; ok {
-		t.Errorf("CN exit must not be chained, got %q", plan[0])
-	}
-	if plan[1] == "" || plan[2] == "" {
-		t.Errorf("non-CN exits must be chained: %v", plan)
+	if plan != nil || names != nil {
+		t.Fatalf("chain plan is disabled, want nil/nil, got plan=%v names=%v", plan, names)
 	}
 }
 
-// Multiple entries are reused round-robin so one relay does not carry all exits.
-func TestBuildChainPlan_RoundRobin(t *testing.T) {
+// Round-robin relay reuse is part of the same disabled feature; pinned here so
+// re-enabling chain plan is a deliberate change that must revisit both tests.
+func TestBuildChainPlan_RoundRobinDisabled(t *testing.T) {
 	entries := []*cache.NodeCacheEntry{entry("CN", "a"), entry("CN", "b")}
 	sel := []SelectedNode{
 		{Entry: entry("DE", "d1"), SeqNo: 1},
 		{Entry: entry("DE", "d2"), SeqNo: 2},
 		{Entry: entry("DE", "d3"), SeqNo: 3},
 	}
-	plan, _ := buildChainPlan(context.Background(), sel, entries, renderStub)
-	if plan[0] == plan[1] {
-		t.Errorf("round-robin should alternate, got %v", plan)
-	}
-	if plan[0] != plan[2] {
-		t.Errorf("third exit should wrap to first relay, got %v", plan)
+	plan, names := buildChainPlan(context.Background(), sel, entries, renderStub)
+	if plan != nil || names != nil {
+		t.Fatalf("chain plan is disabled, want nil/nil, got plan=%v names=%v", plan, names)
 	}
 }
 

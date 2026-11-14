@@ -29,6 +29,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # go test 之前完全没跑过：CI 绿不代表测试绿。
+      - name: go test
+        run: go test ./...
+        continue-on-error: false
+
   # ── 2. 交叉编译 paily-core 多架构二进制 ─────────────────────────────────────
   build:
     needs: verify
@@ -189,6 +194,9 @@ jobs:
             cp "artifacts/paily-core-linux-$arch"  "$d/bin/paily-core"
             cp "artifacts/paily-fetch-linux-$arch" "$d/bin/paily-fetch"
             cp "artifacts/paily-check-linux-$arch" "$d/bin/paily-check"
+            # download-artifact 落盘是 0644，直接打包会让「解压即用」启动失败。
+            chmod 0755 "$d/bin/paily-core" "$d/bin/paily-fetch" "$d/bin/paily-check"
+            test -x "$d/bin/paily-core" || { echo "paily-core not executable"; exit 1; }
             tar -czf "release/paily-on-nas-$arch-bundle.tar.gz" -C "bundle-$arch" paily-on-nas
           done
 

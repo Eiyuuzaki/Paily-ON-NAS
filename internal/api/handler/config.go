@@ -91,17 +91,31 @@ func (h *ConfigHandler) Update(c *gin.Context) {
 		response.BadRequest(c, "invalid request body")
 		return
 	}
-	if err := validateWindowConstraints(h.db, req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+	// Validate and write inside one transaction: a half-applied batch would
+	// leave the cleanup window shorter than the dead-evaluation window, and the
+	// cleanup goroutine would then delete records the dead logic still needs.
+	var validationErr error
 	now := time.Now()
-	for k, v := range req {
-		row := model.Config{Key: k, Value: v, UpdatedAt: now}
-		if err := h.db.Save(&row).Error; err != nil {
-			response.InternalError(c, "failed to update config")
+	txErr := h.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
+		if err := validateWindowConstraints(tx, req); err != nil {
+			validationErr = err
+			return err
+		}
+		for k, v := range req {
+			row := model.Config{Key: k, Value: v, UpdatedAt: now}
+			if err := tx.Save(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		if validationErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": validationErr.Error()})
 			return
 		}
+		response.InternalError(c, "failed to update config")
+		return
 	}
 	// Return the full config after update.
 	var rows []model.Config

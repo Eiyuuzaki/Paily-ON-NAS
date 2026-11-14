@@ -114,6 +114,7 @@ func autoMigrate(db *gorm.DB) error {
 		&model.CheckerRun{},
 		&model.NodeTagScore{},
 		&model.NodeTimeHealth{},
+		&model.CFAccount{},
 	)
 }
 

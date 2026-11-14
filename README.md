@@ -109,9 +109,10 @@ echo "PAILY_SERVICE_SECRET=$(openssl rand -hex 24)"
 echo "PAILY_JWT_SECRET=$(openssl rand -hex 32)"
 echo "CHECKER_SECRET=$(openssl rand -hex 24)"
 
-# 3. 下载配套二进制到 bin/（按架构选，见 Releases 页面）
-#    bin/paily-fetch   bin/paily-check
-chmod +x bin/paily-fetch bin/paily-check
+# 3. 下载三个二进制到 bin/（按架构选，见 Releases 页面）
+#    bin/paily-core   bin/paily-fetch   bin/paily-check
+#    core 是中枢，缺它时 compose 里的 core 服务无法启动。
+chmod +x bin/paily-core bin/paily-fetch bin/paily-check
 
 # 4. 启动
 docker compose up -d

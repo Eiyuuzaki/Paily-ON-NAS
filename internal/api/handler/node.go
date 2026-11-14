@@ -11,6 +11,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	"gorm.io/gorm"
@@ -20,6 +21,10 @@ import (
 type NodeHandler struct {
 	svc *nodePkg.Service
 	db  *gorm.DB
+	// cache is the distribution snapshot. Deleting a node must invalidate it,
+	// otherwise the removed node keeps being served until something else
+	// triggers a rebuild.
+	cache *cache.AliveCache
 }
 
 // List handles GET /api/v1/nodes.
@@ -153,6 +158,9 @@ func (h *NodeHandler) Delete(c *gin.Context, id openapi_types.UUID) {
 			response.InternalError(c, "failed to delete node")
 		}
 		return
+	}
+	if h.cache != nil {
+		h.cache.TriggerRebuild(c.Request.Context())
 	}
 	response.NoContent(c)
 }

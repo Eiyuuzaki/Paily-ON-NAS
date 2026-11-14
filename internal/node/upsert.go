@@ -28,6 +28,27 @@ func NewUpsertService(db *gorm.DB) *UpsertService {
 	return &UpsertService{db: db}
 }
 
+// ensureMappingAfterConflict adopts a node inserted by a concurrent writer.
+// It is only called after a transaction rolled back on the hash unique index,
+// so the winning row already exists and must be re-read in a fresh transaction;
+// without this the loser of the race silently loses its source mapping.
+func (u *UpsertService) ensureMappingAfterConflict(ctx context.Context, sourceID uuid.UUID, hash string) (uuid.UUID, bool) {
+	var nodeID uuid.UUID
+	err := u.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing model.Node
+		if err := tx.Where("hash = ?", hash).First(&existing).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&model.NodeSource{NodeID: existing.ID, SourceID: sourceID}).Error; err != nil {
+			return err
+		}
+		nodeID = existing.ID
+		return nil
+	})
+	return nodeID, err == nil
+}
+
 // UpsertFromFetchResult processes a fetch result:
 //   - failure       → no-op (existing nodes are preserved)
 //   - success+empty → clear all source mappings, delete orphaned nodes
@@ -140,6 +161,14 @@ func (u *UpsertService) UpsertFromFetchResult(
 			return nil
 		})
 		if err != nil {
+			// Two sources can introduce the same new node at the same time. The
+			// loser hits the hash unique index and its whole transaction rolls
+			// back, so adopt the winner in a fresh transaction instead of
+			// dropping the mapping entirely.
+			if id, ok := u.ensureMappingAfterConflict(ctx, sourceID, p.hash); ok {
+				newNodeIDs[id] = struct{}{}
+				continue
+			}
 			log.Warn().Err(err).Str("hash", p.hash).Msg("node upsert: transaction failed, skipping")
 			continue
 		}

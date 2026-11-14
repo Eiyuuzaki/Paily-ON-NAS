@@ -50,9 +50,9 @@ func New(
 ) *Server {
 	return &Server{
 		auth:         auth.NewHandler(adminPassword, jwtSecret),
-		sources:      &SourceHandler{svc: sourceSvc},
+		sources:      &SourceHandler{svc: sourceSvc, cache: aliveCache},
 		fetcher:      fetcherHandler,
-		nodes:        &NodeHandler{svc: nodeSvc, db: db},
+		nodes:        &NodeHandler{svc: nodeSvc, db: db, cache: aliveCache},
 		checker:      checkerHandler,
 		sponsor:      &SponsorHandler{svc: sponsorSvc},
 		filter:       &FilterHandler{db: db},

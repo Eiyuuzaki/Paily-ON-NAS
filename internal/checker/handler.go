@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/middleware"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -98,6 +98,24 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	// handshake, CDN hiccup) become permanent silent death. See AGENTS.md
 	// 2026-11-11: HidenCloud app2301 was alive the whole time but invisible.
 	deadGraceMin := readConfigInt(h.db, "check_dead_grace_minutes", 360)
+	// Representative probing (2026-11-15): alive nodes that share a server are
+	// the same backend — one entry IP × one Worker — so their availability is
+	// linked and probing all of them every round buys nothing (431 alive HKG
+	// nodes = 6 entrances × 1 Worker). Probe 2 rotating representatives per
+	// server per round instead; hashtext(id || slot) rotates the pick so every
+	// node still gets probed every few rounds, and a server's death surfaces
+	// within a couple of rounds. Servers with few alive nodes (unique origins:
+	// paid airports, self-built singles) are probed in full — no redundancy to
+	// exploit there. Measured on 2026-11-15 pool: alive 978 → 320 reps, script
+	// checks phase 992 → ~200 (the 100-minute phase shrinks to ~25 min).
+	repPerServer := readConfigInt(h.db, "check_rep_per_server", 2)
+	repMinGroup := readConfigInt(h.db, "check_rep_min_group", 3)
+	if repPerServer < 1 {
+		repPerServer = 1
+	}
+	if repMinGroup < 0 {
+		repMinGroup = 0
+	}
 	if proofRounds < 1 {
 		proofRounds = 1
 	}
@@ -109,18 +127,36 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	}
 
 	var nodes []model.Node
-	// hashtext bucketing is PostgreSQL-specific; this deployment targets
-	// PostgreSQL only (see README: static builds ship without sqlite).
+	// hashtext bucketing and window functions are PostgreSQL-specific; this
+	// deployment targets PostgreSQL only (see README: static builds ship
+	// without sqlite).
+	//
+	// Placeholder order matches the CTE-first text: repMinGroup, repPerServer
+	// bind inside the reps CTE; proofRounds, deadGraceMin, sweepSlots, sweepSlots
+	// bind in the dead-side branch.
 	if err := h.db.WithContext(c.Request.Context()).Raw(`
-		SELECT * FROM nodes
-		WHERE archived_at IS NULL
-		  AND (alive = true
-		   OR (SELECT count(*) FROM node_initial_checks WHERE node_id = nodes.id) < ?
-		   OR mod(abs(hashtext(id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
-		   OR EXISTS (SELECT 1 FROM node_initial_checks
-		      WHERE node_id = nodes.id AND latency_ms = -1
-		      AND checked_at > now() - make_interval(mins => ?))
-	  )`, proofRounds, sweepSlots, sweepSlots, deadGraceMin).Scan(&nodes).Error; err != nil {
+		WITH ranked AS (
+		    SELECT id, server,
+		           row_number() OVER (PARTITION BY server
+		               ORDER BY hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rn,
+		           count(*) OVER (PARTITION BY server) AS total
+		    FROM nodes
+		    WHERE archived_at IS NULL AND alive = true
+		), reps AS (
+		    SELECT id FROM ranked WHERE total <= ? OR rn <= ?
+		)
+		SELECT * FROM nodes n
+		WHERE n.archived_at IS NULL
+		  AND (
+		       (n.alive = false AND (
+		            (SELECT count(*) FROM node_initial_checks WHERE node_id = n.id) < ?
+		            OR EXISTS (SELECT 1 FROM node_initial_checks
+		               WHERE node_id = n.id AND latency_ms = -1
+		               AND checked_at > now() - make_interval(mins => ?))
+		            OR mod(abs(hashtext(n.id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
+		       ))
+		       OR (n.alive = true AND n.id IN (SELECT id FROM reps))
+		  )`, repMinGroup, repPerServer, proofRounds, deadGraceMin, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}

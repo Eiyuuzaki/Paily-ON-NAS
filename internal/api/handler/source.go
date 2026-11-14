@@ -7,6 +7,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
 	"gorm.io/gorm"
@@ -15,6 +16,9 @@ import (
 // SourceHandler handles admin source management endpoints.
 type SourceHandler struct {
 	svc *sourcePkg.Service
+	// cache is the distribution snapshot; a deleted source must stop being
+	// distributed immediately, not at the next unrelated rebuild.
+	cache *cache.AliveCache
 }
 
 // Create handles POST /api/v1/sources.
@@ -193,6 +197,9 @@ func (h *SourceHandler) Delete(c *gin.Context, id openapi_types.UUID) {
 			response.InternalError(c, "failed to delete source")
 		}
 		return
+	}
+	if h.cache != nil {
+		h.cache.TriggerRebuild(c.Request.Context())
 	}
 	c.Status(http.StatusNoContent)
 }

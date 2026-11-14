@@ -1,0 +1,19 @@
+# Docker build context exclusions. Git ignore rules do NOT apply here.
+.git
+.gitignore
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+data/
+tokens/
+bin/
+dist/
+node_modules/
+_research/
+_gocache_tmp/
+_gotmp/
+_cfnew_d/
+*.tar.gz
+*.log

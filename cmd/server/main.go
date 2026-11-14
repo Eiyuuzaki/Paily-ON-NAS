@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	// Embed the IANA timezone database so TZ=Asia/Shanghai works on a bare
+	// alpine image without a tzdata package; daily traffic buckets rely on it.
+	_ "time/tzdata"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -127,16 +131,27 @@ func main() {
 	svcMW := auth.ServiceBearerMiddleware(cfg.Auth.ServiceSecret)
 	adminMW := auth.AdminJWTMiddleware(cfg.Auth.JWTSecret)
 	sourceCreateMW := auth.AdminOrServiceMiddleware(cfg.Auth.JWTSecret, cfg.Auth.ServiceSecret)
+	subMW := auth.SubscribeTokenMiddleware(cfg.Auth.SubscribeToken)
+	if cfg.Auth.SubscribeToken == "" {
+		fmt.Fprintln(os.Stderr, "warning: auth.subscribe_token is empty — /clash, /singbox and /base64 are unauthenticated and expose working node credentials")
+	}
 
 	engine.Use(func(c *gin.Context) {
 		p := c.FullPath()
 		m := c.Request.Method
 		switch {
 		case p == "" ||
-			p == "/:format" ||
 			p == "/health" ||
 			strings.HasPrefix(p, "/api/v1/auth/"):
 			// public — no auth required
+		case p == "/:format":
+			// Subscription output carries node credentials; guard it when a token
+			// is configured, otherwise fall through to the open behaviour.
+			if cfg.Auth.SubscribeToken == "" {
+				c.Next()
+				return
+			}
+			subMW(c)
 		case strings.HasPrefix(p, "/api/v1/check/"):
 			// checker-specific: authenticates via checker secret and injects checker_tag
 			middleware.CheckerTagMiddleware(cfg)(c)
@@ -155,6 +170,27 @@ func main() {
 	})
 
 	srv := handler.New(cfg.Auth.AdminPassword, cfg.Auth.JWTSecret, sourceSvc, fetchHandler, nodeSvc, checkerHandler, sponsorSvc, aliveCache, database, cfg)
+
+	// CF module (opt-in advanced) — registered before RegisterHandlers so the
+	// global auth middleware sees these paths and applies adminMW by default.
+	cfHandler := handler.NewCFHandler(database)
+	cf := engine.Group("/api/v1/cf")
+	{
+		cf.GET("/module", cfHandler.Status)
+		cf.GET("/summary", cfHandler.Summary)
+		cf.POST("/accounts/:id/token", cfHandler.SetToken)
+		cf.GET("/accounts/:id/usage", cfHandler.AccountUsage)
+		cf.POST("/selfcheck", cfHandler.SelfCheck)
+		cf.GET("/accounts/:id/token", cfHandler.TokenStatus)
+		cf.POST("/module/activate", cfHandler.Activate)
+		cf.POST("/module/deactivate", cfHandler.Deactivate)
+		cf.GET("/accounts", cfHandler.ListAccounts)
+		cf.POST("/accounts", cfHandler.CreateAccount)
+		cf.PUT("/accounts/:id", cfHandler.UpdateAccount)
+		cf.DELETE("/accounts/:id", cfHandler.DeleteAccount)
+		cf.POST("/accounts/:id/check", cfHandler.CheckAccount)
+	}
+
 	api.RegisterHandlers(engine, srv)
 
 	// Health probe — always returns 200, no auth required.
@@ -397,7 +433,19 @@ ORDER BY r.completed_at ASC`
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Info().Str("addr", addr).Msg("paily-core starting")
 
-	if err := engine.Run(addr); err != nil {
+	// Explicit server: Gin's default http.Server has no timeouts, so a slow or
+	// oversized request (login brute force, huge report body) can pin a
+	// connection indefinitely.
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           engine,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatal().Err(err).Msg("server exited")
 	}
 }
