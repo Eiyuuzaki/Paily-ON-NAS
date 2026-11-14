@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -37,7 +38,7 @@ func ServiceBearerMiddleware(serviceSecret string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
 			return
 		}
-		if token != serviceSecret {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(serviceSecret)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid service secret"})
 			return
 		}
@@ -54,7 +55,7 @@ func AdminOrServiceMiddleware(jwtSecret, serviceSecret string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
 			return
 		}
-		if token == serviceSecret {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(serviceSecret)) == 1 {
 			c.Set(ctxKeyAdminAuthed, true)
 			c.Next()
 			return
@@ -64,6 +65,26 @@ func AdminOrServiceMiddleware(jwtSecret, serviceSecret string) gin.HandlerFunc {
 			return
 		}
 		c.Set(ctxKeyAdminAuthed, true)
+		c.Next()
+	}
+}
+
+// SubscribeTokenMiddleware guards the subscription endpoints. A subscription
+// body contains usable node credentials, so an exposed port leaks them. The
+// token may be supplied as ?token= or as a Bearer header, which keeps normal
+// Clash clients working (they can use the full URL).
+func SubscribeTokenMiddleware(expected string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.Query("token")
+		if token == "" {
+			if h, ok := bearerToken(c); ok {
+				token = h
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing subscribe token"})
+			return
+		}
 		c.Next()
 	}
 }
@@ -78,5 +99,11 @@ func bearerToken(c *gin.Context) (string, bool) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false
 	}
-	return strings.TrimSpace(parts[1]), true
+	token := strings.TrimSpace(parts[1])
+	// An empty token must never be treated as a credential: comparing it to an
+	// empty service secret would otherwise authenticate the caller.
+	if token == "" {
+		return "", false
+	}
+	return token, true
 }

@@ -40,7 +40,7 @@ type DatabaseConfig struct {
 // AuthConfig holds secrets that must be provided via config file or env.
 type AuthConfig struct {
 	// AdminPassword is the plaintext admin password used during login.
-	// Always load from env (PAILY_AUTH_ADMINPASSWORD) in production.
+	// Always load from env (PAILY_AUTH_ADMIN_PASSWORD) in production.
 	AdminPassword string `mapstructure:"admin_password"`
 
 	// ServiceSecret is the shared Bearer token for fetcher / checker services.
@@ -48,6 +48,12 @@ type AuthConfig struct {
 
 	// JWTSecret is the HMAC key for signing JWTs. Min 32 chars recommended.
 	JWTSecret string `mapstructure:"jwt_secret"`
+
+	// SubscribeToken optionally protects the public subscription endpoints
+	// (/:format). Empty keeps the historic open behaviour for LAN use; set it
+	// when the service is reachable from anywhere else, because the response
+	// contains working node credentials.
+	SubscribeToken string `mapstructure:"subscribe_token"`
 }
 
 // Load reads config from file and environment variables.
@@ -95,5 +101,60 @@ func Load(cfgFile string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 	return &cfg, nil
+}
+
+// minJWTSecretLen is the shortest JWT secret accepted at startup. HS256 keys
+// shorter than this are guessable.
+const minJWTSecretLen = 32
+
+// weakSecrets are placeholder values that ship in examples and docs. Accepting
+// them in production would leave the deployment wide open.
+var weakSecrets = map[string]bool{
+	"":                        true,
+	"change-me":               true,
+	"changeme":                true,
+	"change-me-admin-password": true,
+	"change-me-service-secret": true,
+	"change-me-checker-secret": true,
+	"password":                true,
+	"secret":                  true,
+}
+
+// validate refuses an auth configuration that cannot authenticate anyone.
+//
+// An empty JWT secret lets an attacker sign their own access token, and an
+// empty service secret makes an empty Bearer header compare equal to it.
+// Compose guards its own entry point with ${VAR:?}, but the binary must not
+// depend on that: config files, misspelled env vars and direct runs all reach
+// here.
+func (c *Config) validate() error {
+	jwt := strings.TrimSpace(c.Auth.JWTSecret)
+	if jwt == "" {
+		return fmt.Errorf("auth.jwt_secret is required: an empty secret allows forged admin tokens")
+	}
+	if weakSecrets[strings.ToLower(jwt)] {
+		return fmt.Errorf("auth.jwt_secret must not be a placeholder value")
+	}
+	if len(jwt) < minJWTSecretLen {
+		return fmt.Errorf("auth.jwt_secret must be at least %d characters", minJWTSecretLen)
+	}
+	svc := strings.TrimSpace(c.Auth.ServiceSecret)
+	if svc == "" {
+		return fmt.Errorf("auth.service_secret is required: an empty secret accepts an empty Bearer token")
+	}
+	if weakSecrets[strings.ToLower(svc)] {
+		return fmt.Errorf("auth.service_secret must not be a placeholder value")
+	}
+	admin := strings.TrimSpace(c.Auth.AdminPassword)
+	if admin == "" {
+		return fmt.Errorf("auth.admin_password is required")
+	}
+	if weakSecrets[strings.ToLower(admin)] {
+		return fmt.Errorf("auth.admin_password must not be a placeholder value")
+	}
+	return nil
 }

@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
@@ -18,6 +20,14 @@ type Handler struct {
 // adminPassword is the plaintext password from config; it is never stored in DB.
 func NewHandler(adminPassword, jwtSecret string) *Handler {
 	return &Handler{adminPassword: adminPassword, jwtSecret: jwtSecret}
+}
+
+// isBcryptHash reports whether s is a bcrypt hash rather than a plaintext
+// password, so the two modes can be kept strictly separate.
+func isBcryptHash(s string) bool {
+	return strings.HasPrefix(s, "$2a$") ||
+		strings.HasPrefix(s, "$2b$") ||
+		strings.HasPrefix(s, "$2y$")
 }
 
 type loginRequest struct {
@@ -37,13 +47,18 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// Support both plaintext comparison and bcrypt hash stored in config.
-	if err := bcrypt.CompareHashAndPassword([]byte(h.adminPassword), []byte(req.Password)); err != nil {
-		// Fallback: plaintext comparison (for dev convenience; production should use bcrypt hash)
-		if req.Password != h.adminPassword {
+	// A bcrypt hash is compared as a hash only. The previous plaintext fallback
+	// let anyone who obtained the hash log in by submitting the hash itself,
+	// which defeats the point of storing a hash.
+	if isBcryptHash(h.adminPassword) {
+		if err := bcrypt.CompareHashAndPassword([]byte(h.adminPassword), []byte(req.Password)); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid password"})
 			return
 		}
+	} else if subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.adminPassword)) != 1 {
+		// Plaintext config remains a development convenience only.
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid password"})
+		return
 	}
 
 	accessToken, err := IssueAccessToken(h.jwtSecret)
