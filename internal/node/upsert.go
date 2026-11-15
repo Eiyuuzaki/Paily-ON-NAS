@@ -109,7 +109,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 	// Free sources re-publish the same dead endpoints every round. Without a
 	// gate the pool grows without bound and the checker spends most of its
 	// budget re-probing nodes that have never once succeeded.
-	incoming = u.gateIncoming(ctx, incoming)
+	incoming = u.gateIncoming(ctx, sourceID, incoming)
 
 	// Load existing mappings for this source.
 	var oldMappings []model.NodeSource
@@ -355,7 +355,13 @@ func endpointKey(server string, port int) string {
 // gateIncoming applies the ingress cap described at the call site.
 // Ordering is preserved: nodes that already exist pass first, then new
 // entries are admitted until their endpoint or protocol quota is spent.
-func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode) []parsedNode {
+// On top of that, sources at priority 0 (public/free lists) may introduce
+// at most ingress_max_new_per_source brand-new nodes per round: a firehose
+// source posting 400+ entries per round otherwise claims the whole probe
+// budget for a ~10% yield, and the checker pool becomes its backlog
+// (2026-11-15: kooker-jp 469 nodes/round, 40 alive). Higher-priority
+// sources — paid airports (1) and self-built (2) — are exempt.
+func (u *UpsertService) gateIncoming(ctx context.Context, sourceID uuid.UUID, incoming []parsedNode) []parsedNode {
 	if len(incoming) == 0 {
 		return incoming
 	}
@@ -363,6 +369,19 @@ func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode)
 	zeroQuota := readCfgInt(u.db, "ingress_zero_yield_quota", 20)
 	if maxPerEndpoint <= 0 {
 		maxPerEndpoint = 3
+	}
+
+	// Per-source cap: only priority-0 sources are throttled; paid airports
+	// and self-built pipelines are exempt. 0 disables the cap.
+	maxNewPerSource := readCfgInt(u.db, "ingress_max_new_per_source", 40)
+	sourcePriority := 0
+	var srcRow struct{ Priority int }
+	if err := u.db.WithContext(ctx).Model(&model.Source{}).
+		Select("priority").Where("id = ?", sourceID).Scan(&srcRow).Error; err == nil {
+		sourcePriority = srcRow.Priority
+	}
+	if sourcePriority > 0 {
+		maxNewPerSource = 0 // 0 = unlimited for exempt sources
 	}
 
 	// Which of these hashes are already in the pool? Those are refreshes,
@@ -414,7 +433,8 @@ func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode)
 
 	out := make([]parsedNode, 0, len(incoming))
 	seen := make(map[string]struct{}, len(incoming))
-	droppedEP, droppedProto, droppedDup, droppedRetired := 0, 0, 0, 0
+	droppedEP, droppedProto, droppedDup, droppedRetired, droppedNewSrc := 0, 0, 0, 0, 0
+	newAdmitted := 0
 	for _, p := range incoming {
 		if _, dup := seen[p.hash]; dup {
 			droppedDup++
@@ -429,6 +449,11 @@ func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode)
 			out = append(out, p)
 			continue
 		}
+		// Per-source throttle on brand-new nodes (priority-0 sources only).
+		if maxNewPerSource > 0 && newAdmitted >= maxNewPerSource {
+			droppedNewSrc++
+			continue
+		}
 		if zeroYieldProtocols[p.protocol] && protoCount[p.protocol] >= zeroQuota {
 			droppedProto++
 			continue
@@ -440,12 +465,14 @@ func (u *UpsertService) gateIncoming(ctx context.Context, incoming []parsedNode)
 		}
 		epCount[k]++
 		protoCount[p.protocol]++
+		newAdmitted++
 		out = append(out, p)
 	}
-	if droppedEP+droppedProto+droppedDup+droppedRetired > 0 {
+	if droppedEP+droppedProto+droppedDup+droppedRetired+droppedNewSrc > 0 {
 		log.Info().
 			Int("in", len(incoming)).Int("kept", len(out)).
 			Int("endpoint_cap", droppedEP).Int("protocol_quota", droppedProto).Int("dup", droppedDup).Int("retired", droppedRetired).
+			Int("source_new_cap", droppedNewSrc).
 			Msg("node upsert: ingress gate filtered")
 	}
 	return out

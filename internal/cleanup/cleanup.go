@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
-	"github.com/rs/zerolog/log"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -107,6 +107,29 @@ func doCleanup(db *gorm.DB, rebuild RebuildTrigger) {
 		}
 	}
 
+	// ── Was-alive-but-dead retention ─────────────────────────────────
+	// The never-alive rule above only retires nodes that never succeeded
+	// once. Nodes that DID pass a check and then died stay in the pool
+	// forever (kept for revival), which let a vmess/http backlog accumulate
+	// (2026-11-15: 316 dead vmess + 1341 blank-region dead). A node whose
+	// last successful check is older than the retention window has had
+	// ~84 probe opportunities at the default cadence — if it is still
+	// dead, archive it. New nodes are unaffected: they have no success on
+	// record and remain under the never-alive proof window instead.
+	deadRetentionDays := readConfigInt(db, "node_dead_retention_days", 7)
+	if deadRetentionDays > 0 {
+		deadCutoff := now.AddDate(0, 0, -deadRetentionDays)
+		archived, err := archiveStaleDeadNodes(ctx, db, deadCutoff)
+		if err != nil {
+			log.Warn().Err(err).Msg("cleanup: archive stale-dead nodes failed")
+		} else if archived > 0 {
+			log.Info().Int64("rows", archived).Int("retention_days", deadRetentionDays).Msg("cleanup: archived stale-dead nodes")
+			if rebuild != nil {
+				rebuild.TriggerRebuild(ctx)
+			}
+		}
+	}
+
 	// ── Time-of-day health aggregation ─────────────────────────────
 	// Pre-aggregate per-hour alive rates (7-day window) so the
 	// distribution hot path never aggregates node_initial_checks.
@@ -126,7 +149,7 @@ func refreshTimeHealth(ctx context.Context, db *gorm.DB) error {
 		TotalCount int64
 	}
 	err := db.WithContext(ctx).Table("node_initial_checks").
-		Select("node_id, EXTRACT(hour FROM checked_at)::int AS hour, " +
+		Select("node_id, EXTRACT(hour FROM checked_at)::int AS hour, "+
 			"COUNT(*) FILTER (WHERE latency_ms > 0) AS alive_count, COUNT(*) AS total_count").
 		Where("checked_at > ?", time.Now().AddDate(0, 0, -7)).
 		Group("node_id, hour").
@@ -232,6 +255,28 @@ func archiveNeverAliveNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) 
 		"SELECT id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
 		" AND n.created_at < ? AND NOT EXISTS (SELECT 1 FROM node_initial_checks c" +
 		" WHERE c.node_id = n.id AND c.latency_ms <> -1) LIMIT ?)"
+	var total int64
+	for {
+		res := db.WithContext(ctx).Exec(query, cutoff, deleteBatchSize)
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < deleteBatchSize {
+			return total, nil
+		}
+	}
+}
+
+// archiveStaleDeadNodes retires currently-dead nodes whose most recent
+// successful check is older than the cutoff. Rows are kept (not deleted) so
+// the unique hash index keeps blocking re-ingestion of the same dead
+// endpoint by free sources, same contract as archiveNeverAliveNodes.
+func archiveStaleDeadNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) (int64, error) {
+	query := "UPDATE nodes SET archived_at = NOW() WHERE id IN (" +
+		"SELECT n.id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
+		" AND EXISTS (SELECT 1 FROM node_initial_checks c0 WHERE c0.node_id = n.id AND c0.latency_ms <> -1)" +
+		" AND NOT EXISTS (SELECT 1 FROM node_initial_checks c WHERE c.node_id = n.id AND c.latency_ms <> -1 AND c.checked_at > ?) LIMIT ?)"
 	var total int64
 	for {
 		res := db.WithContext(ctx).Exec(query, cutoff, deleteBatchSize)
