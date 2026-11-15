@@ -132,6 +132,8 @@ services:
       GEO_MODE: ${GEO_MODE:-native_api}
       SPEED_ENABLED: ${SPEED_ENABLED:-false}
       SCRIPT_DIR: "/app/scripts"
+      # 节点级并发：yaml 默认 2 是脚本检查 90 分钟瓶颈（423 节点 0.08/s）
+      DEEP_SCRIPT_NODE_CONCURRENCY: "12"
       SCRIPT_CONCURRENCY: "16"
       PROGRESS_BAR: ${PROGRESS_BAR:-false}
     volumes:
