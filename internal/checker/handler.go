@@ -379,7 +379,7 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 	// checker dials raw, so exit geo follows raw, and grouping by column
 	// painted JP-named nodes with US verdicts from unrelated US-v6 nodes.
 	ids := make([]uuid.UUID, 0, len(regionUpdates))
-	caseExpr := "CASE n.id"
+	caseExpr := "CASE id"
 	args := make([]any, 0, len(regionUpdates)*2)
 	for nodeID, region := range regionUpdates {
 		ids = append(ids, nodeID)
@@ -391,6 +391,18 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 		RawServer string
 		Region    string
 	}
+	// Placeholder order MUST match the SQL text: t's `IN ?` binds ids, then
+	// the CASE pairs bind, then m's `IN ?` binds ids again. The previous
+	// layout interleaved them wrong and every round failed with
+	// "syntax error at WHEN" (2026-11-15, 3 checker rounds).
+	bind := make([]any, 0, len(ids)*2+len(args))
+	for _, id := range ids {
+		bind = append(bind, id)
+	}
+	bind = append(bind, args...)
+	for _, id := range ids {
+		bind = append(bind, id)
+	}
 	if err := h.db.WithContext(ctx).Raw(`
 		SELECT DISTINCT ON (raw_srv) raw_srv, m.region
 		FROM (
@@ -399,7 +411,7 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 		) t
 		JOIN ( SELECT id AS nid, `+caseExpr+` AS region FROM nodes WHERE id IN ? ) m
 		  ON m.nid = t.nid
-	`, args, ids, ids).Scan(&rows).Error; err != nil {
+	`, bind...).Scan(&rows).Error; err != nil {
 		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region sibling lookup failed")
 		return
 	}
