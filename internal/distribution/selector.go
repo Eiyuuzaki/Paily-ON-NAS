@@ -70,7 +70,14 @@ func egressIdentity(e *cache.NodeCacheEntry) string {
 			sni, _ = m["sni"].(string)
 		}
 		if sni != "" && net.ParseIP(e.Server) != nil {
-			return "sni:" + sni
+			// Split the shared-Worker identity by measured exit region: all
+			// entries share one Worker quota, but their egress clusters differ
+			// per entry segment (HKG→HK, US-v6→US, Tokyo-v6→JP). One flat SNI
+			// key made every region compete for the same 16 slots, evicting
+			// 42ms HK exits in favour of US nodes with inflated scores
+			// (2026-11-15: zero self-built HK in the HK group). Quota safety
+			// is preserved per bucket: 3 regions × 16 ≪ 637 entries.
+			return "sni:" + sni + "|" + e.Region
 		}
 	}
 	return "srv:" + e.Server
