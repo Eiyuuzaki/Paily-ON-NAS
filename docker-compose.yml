@@ -134,7 +134,7 @@ services:
       SCRIPT_DIR: "/app/scripts"
       # 节点级并发：yaml 默认 2 是脚本检查 90 分钟瓶颈（423 节点 0.08/s）
       DEEP_SCRIPT_NODE_CONCURRENCY: "12"
-      SCRIPT_CONCURRENCY: "64"  # matches 12 nodes x 5 scripts = 60 engine demand
+      DEEP_SCRIPT_CONCURRENCY: "64"  # config.go reads this exact variable; 12 nodes x 5 scripts = 60 demand
       PROGRESS_BAR: ${PROGRESS_BAR:-false}
     volumes:
       - ./bin/paily-check:/app/paily-check:ro
