@@ -38,7 +38,8 @@ Paily 测活后端随后从节点池拉取节点进行测活。测活结果由 P
 | `server` | 节点地址。 |
 | `protocol` | 节点协议。 |
 | `password` | 节点的主要认证凭据。 |
-| `region` | 出口地区，由测活结果的复筛阶段给出。 |
+| `region` | 最近一次地区判断值；是否为出口观测由 `region_source` 说明。 |
+| `region_source` | `native_egress`/`legacy_egress` 表示出口探测；`inbound_mmdb` 仅为入口地址推测；`checker_unspecified` 为旧 Checker；`unknown` 为历史或无来源值。当前不用于过滤或路由。 |
 | `alive` | 是否存活，由初筛结果决定。 |
 | `score` | 节点综合评分，由复筛结果计算。 |
 | `sources` | 与该节点关联的来源列表。 |
