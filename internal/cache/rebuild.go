@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/filter"
 	sponsorPkg "github.com/Eiyuuzaki/paily-on-nas/internal/sponsor"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -253,9 +253,15 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 
 		for i := range nodes {
 			n := &nodes[i]
-			if liveSet == nil || !liveSet[n.ID] {
-				continue // not alive in this tag's latest run
-			}
+			// 2026-11-15: gate on nodes.alive (maintained by batchAliveDecision)
+			// instead of latest-run membership. Under representative probing a
+			// node is only PROBED when it is its server's representative —
+			// requiring membership in the latest run would drop every non-
+			// representative from the subscription within one round (observed:
+			// CF-JP-02/03 vanished from the JP group at 16:36 while alive).
+			// A1 already filtered alive=true; a failed latest check flips
+			// nodes.alive=false at post time, so dead nodes still exit here.
+			_ = liveSet
 
 			dc := latestDeepByTag[n.ID][tag]
 			streaming := decodeStreaming(dc.StreamingResult)
