@@ -361,38 +361,51 @@ func (h *Handler) buildCheckRecords(
 	return
 }
 
+// applyRegionUpdates writes the measured exit region for probed nodes and
+// propagates it to every alive sibling on the same server. All nodes on one
+// server dial the same entry IP and the same Worker, so their exit behavior
+// is identical — but under representative probing only ~2 nodes per server
+// are measured per round, and without propagation the other siblings keep a
+// stale region for days (2026-11-15: subscription showed US for nodes whose
+// daytime exit was HK, because their last probe was a night round).
 func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid.UUID]string) {
 	if len(regionUpdates) == 0 {
 		return
 	}
-	const batchSize = 500
-	type updateItem struct {
-		NodeID uuid.UUID
+	// Propagate: join each measured (node -> region) to all alive nodes on the
+	// same server. All measurements in one batch come from the same checker
+	// round, so any sibling of a measured node inherits the round's verdict.
+	ids := make([]uuid.UUID, 0, len(regionUpdates))
+	caseExpr := "CASE n.id"
+	args := make([]any, 0, len(regionUpdates)*2)
+	for nodeID, region := range regionUpdates {
+		ids = append(ids, nodeID)
+		args = append(args, nodeID, region)
+		caseExpr += " WHEN ? THEN ?"
+	}
+	caseExpr += " ELSE '' END"
+	var rows []struct {
+		Server string
 		Region string
 	}
-	updates := make([]updateItem, 0, len(regionUpdates))
-	for nodeID, region := range regionUpdates {
-		updates = append(updates, updateItem{NodeID: nodeID, Region: region})
+	if err := h.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT ON (n.server) n.server, m.region
+		FROM nodes n
+		JOIN ( SELECT id AS nid, `+caseExpr+` AS region FROM nodes WHERE id IN ? ) m
+		  ON m.nid = n.id
+		WHERE n.id IN ?`, args, ids, ids).Scan(&rows).Error; err != nil {
+		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region sibling lookup failed")
+		return
 	}
-	for start := 0; start < len(updates); start += batchSize {
-		end := start + batchSize
-		if end > len(updates) {
-			end = len(updates)
+	for _, row := range rows {
+		if row.Region == "" {
+			continue
 		}
-		batch := updates[start:end]
-		ids := make([]uuid.UUID, 0, len(batch))
-		args := make([]any, 0, len(batch)*2)
-		caseExpr := "CASE id"
-		for _, item := range batch {
-			ids = append(ids, item.NodeID)
-			args = append(args, item.NodeID, item.Region)
-			caseExpr += " WHEN ? THEN ?"
-		}
-		caseExpr += " ELSE region END"
 		if err := h.db.WithContext(ctx).Model(&model.Node{}).
-			Where("id IN ?", ids).
-			Update("region", gorm.Expr(caseExpr, args...)).Error; err != nil {
-			log.Warn().Err(err).Int("batch_size", len(batch)).Msg("checker: batch region update failed")
+			Where("server = ? AND archived_at IS NULL AND alive = true", row.Server).
+			Where("region IS DISTINCT FROM ?", row.Region).
+			Update("region", row.Region).Error; err != nil {
+			log.Warn().Err(err).Str("server", row.Server).Msg("checker: region sibling update failed")
 		}
 	}
 }
