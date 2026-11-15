@@ -372,9 +372,12 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 	if len(regionUpdates) == 0 {
 		return
 	}
-	// Propagate: join each measured (node -> region) to all alive nodes on the
-	// same server. All measurements in one batch come from the same checker
-	// round, so any sibling of a measured node inherits the round's verdict.
+	// Propagate: join each measured (node -> region) to all alive nodes whose
+	// RAW dial target (raw.server) matches the measured node's raw server.
+	// The server COLUMN is a rotation label that may diverge from the raw
+	// dial target (2026-11-15: 1053 nodes with column != raw.server) — the
+	// checker dials raw, so exit geo follows raw, and grouping by column
+	// painted JP-named nodes with US verdicts from unrelated US-v6 nodes.
 	ids := make([]uuid.UUID, 0, len(regionUpdates))
 	caseExpr := "CASE n.id"
 	args := make([]any, 0, len(regionUpdates)*2)
@@ -385,27 +388,31 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 	}
 	caseExpr += " ELSE '' END"
 	var rows []struct {
-		Server string
-		Region string
+		RawServer string
+		Region    string
 	}
 	if err := h.db.WithContext(ctx).Raw(`
-		SELECT DISTINCT ON (n.server) n.server, m.region
-		FROM nodes n
+		SELECT DISTINCT ON (raw_srv) raw_srv, m.region
+		FROM (
+		    SELECT id AS nid, COALESCE(raw::jsonb->>'server', server) AS raw_srv
+		    FROM nodes WHERE id IN ?
+		) t
 		JOIN ( SELECT id AS nid, `+caseExpr+` AS region FROM nodes WHERE id IN ? ) m
-		  ON m.nid = n.id
-		WHERE n.id IN ?`, args, ids, ids).Scan(&rows).Error; err != nil {
+		  ON m.nid = t.nid
+	`, args, ids, ids).Scan(&rows).Error; err != nil {
 		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region sibling lookup failed")
 		return
 	}
 	for _, row := range rows {
-		if row.Region == "" {
+		if row.RawServer == "" || row.Region == "" {
 			continue
 		}
-		if err := h.db.WithContext(ctx).Model(&model.Node{}).
-			Where("server = ? AND archived_at IS NULL AND alive = true", row.Server).
-			Where("region IS DISTINCT FROM ?", row.Region).
-			Update("region", row.Region).Error; err != nil {
-			log.Warn().Err(err).Str("server", row.Server).Msg("checker: region sibling update failed")
+		if err := h.db.WithContext(ctx).Exec(`
+			UPDATE nodes SET region = ?, updated_at = NOW()
+			WHERE archived_at IS NULL AND alive = true
+			  AND COALESCE(raw::jsonb->>'server', server) = ?
+			  AND region IS DISTINCT FROM ?`, row.Region, row.RawServer, row.Region).Error; err != nil {
+			log.Warn().Err(err).Str("raw_server", row.RawServer).Msg("checker: region sibling update failed")
 		}
 	}
 }
