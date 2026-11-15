@@ -311,6 +311,7 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 				Raw:             n.Raw,
 				Score:           score,
 				Region:          n.Region,
+				RegionSource:    n.RegionSource,
 				Alive:           true,
 				StreamingResult: streaming,
 				SpeedKbps:       dc.SpeedKbps,

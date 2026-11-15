@@ -24,18 +24,19 @@ type NodeTagScore struct {
 
 // Node represents a single proxy node in the pool.
 type Node struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	Hash      string    `gorm:"uniqueIndex;not null"` // sha256(protocol|server:port|auth)
-	Server    string    `gorm:"index;not null"`
-	Port      int       `gorm:"not null;default:0"`
-	Password  string    // primary auth field (uuid/password/psk)
-	Protocol  string    `gorm:"not null"`
-	Raw       string    `gorm:"not null"` // JSON compact of full clash proxy fields
-	Region    string    // latest region from checker
-	Alive     bool      `gorm:"index;not null;default:false"`
-	Score     float64   `gorm:"not null;default:0"` // float64 [0,1]; grade only at distribution time
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Hash         string    `gorm:"uniqueIndex;not null"` // sha256(protocol|server:port|auth)
+	Server       string    `gorm:"index;not null"`
+	Port         int       `gorm:"not null;default:0"`
+	Password     string    // primary auth field (uuid/password/psk)
+	Protocol     string    `gorm:"not null"`
+	Raw          string    `gorm:"not null"` // JSON compact of full clash proxy fields
+	Region       string    // latest region from checker
+	RegionSource string    `gorm:"not null;default:unknown"` // native_egress, legacy_egress, inbound_mmdb, checker_unspecified, unknown
+	Alive        bool      `gorm:"index;not null;default:false"`
+	Score        float64   `gorm:"not null;default:0"` // float64 [0,1]; grade only at distribution time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	// ArchivedAt marks a node retired from probing. The row is kept so the
 	// unique hash index keeps blocking re-ingestion: sources republish the
 	// same dead endpoints every round, and a hard delete would re-admit them

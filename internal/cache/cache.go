@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -24,6 +24,7 @@ type NodeCacheEntry struct {
 	Raw             string  // compact JSON clash proxy fields
 	Score           float64 // per-tag EWMA score, or nodes.score in global view
 	Region          string
+	RegionSource    string
 	Alive           bool
 	StreamingResult map[string]bool // decoded from latest deep_check.streaming_result for this tag
 	SpeedKbps       int             // from latest deep_check for this tag

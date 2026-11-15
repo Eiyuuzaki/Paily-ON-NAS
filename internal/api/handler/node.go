@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"gorm.io/gorm"
 )
 
@@ -175,6 +175,9 @@ func nodeToSummary(n *model.Node, latestInitial *model.NodeInitialCheck, latestD
 		Alive:    n.Alive,
 		Score:    n.Score,
 	}
+	if n.RegionSource != "" {
+		s.RegionSource = &n.RegionSource
+	}
 	if latestInitial != nil {
 		s.LatestLatencyMs = &latestInitial.LatencyMs
 	}
@@ -215,6 +218,9 @@ func nodeToDetail(n *model.Node, sources []model.Source, latestDeep *model.NodeD
 		Raw:       &rawMap,
 		CreatedAt: &createdAt,
 		UpdatedAt: &updatedAt,
+	}
+	if n.RegionSource != "" {
+		detail.RegionSource = &n.RegionSource
 	}
 
 	if latestDeep != nil {

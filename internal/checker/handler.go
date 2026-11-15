@@ -228,7 +228,7 @@ func (h *Handler) PostResults(c *gin.Context) {
 			Int("count", len(results)).Msg("checker: processing started")
 
 		// ── Phase 1: atomic transaction ───────────────────────────────────
-		initialChecks, deepChecks, nodeIDs, regionUpdates := h.buildCheckRecords(results, tag, checkRunID, now)
+		initialChecks, deepChecks, nodeIDs, regionUpdates, regionSources := h.buildCheckRecords(results, tag, checkRunID, now)
 
 		err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.CreateInBatches(initialChecks, 500).Error; err != nil {
@@ -254,10 +254,10 @@ func (h *Handler) PostResults(c *gin.Context) {
 		}
 
 		// GeoIP enrichment for nodes without a region (best-effort, from server IP).
-		enrichRegionGeoIP(ctx, h.db, nodeIDs, regionUpdates)
+		enrichRegionGeoIP(ctx, h.db, nodeIDs, regionUpdates, regionSources)
 
 		// Apply region updates outside the transaction (best-effort).
-		h.applyRegionUpdates(ctx, regionUpdates)
+		h.applyRegionUpdates(ctx, regionUpdates, regionSources)
 
 		// ── Phase 2: batch alive decision ─────────────────────────────────
 		windowMinutes := h.readConfigInt(ctx, "node_alive_check_window_minutes", 240)
@@ -289,8 +289,28 @@ func (h *Handler) PostResults(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// normalizeRegionSource prevents unknown wire values from becoming trusted provenance.
+func normalizeRegionSource(source *string) string {
+	if source == nil {
+		return "checker_unspecified"
+	}
+	switch *source {
+	case "native_egress", "legacy_egress", "inbound_mmdb":
+		return *source
+	default:
+		return "checker_unspecified"
+	}
+}
+
 // buildCheckRecords converts API results into DB model slices.
 // Returns: initial checks, deep checks, all node IDs, and region updates.
+func stringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
 func (h *Handler) buildCheckRecords(
 	results []api.CheckResult,
 	tag string,
@@ -301,8 +321,10 @@ func (h *Handler) buildCheckRecords(
 	deepChecks []model.NodeDeepCheck,
 	nodeIDs []uuid.UUID,
 	regionUpdates map[uuid.UUID]string,
+	regionSources map[uuid.UUID]string,
 ) {
 	regionUpdates = make(map[uuid.UUID]string)
+	regionSources = make(map[uuid.UUID]string)
 	seen := make(map[uuid.UUID]struct{}, len(results))
 
 	for _, result := range results {
@@ -313,7 +335,7 @@ func (h *Handler) buildCheckRecords(
 			CheckRunID: checkRunID,
 			CheckerTag: tag,
 			LatencyMs:  result.Initial.LatencyMs,
-			FailReason: result.Initial.FailReason,
+			FailReason: stringValue(result.Initial.FailReason),
 			CheckedAt:  now,
 		})
 
@@ -355,10 +377,45 @@ func (h *Handler) buildCheckRecords(
 
 			if d.Region != nil && *d.Region != "" {
 				regionUpdates[nodeID] = *d.Region
+				regionSources[nodeID] = normalizeRegionSource(d.RegionSource)
 			}
 		}
 	}
 	return
+}
+
+type regionProbeRow struct {
+	ID        uuid.UUID
+	RawServer string
+}
+
+type pathRegion struct {
+	region, source string
+	conflict       bool
+}
+
+func groupRegionObservations(probes []regionProbeRow, regions, sources map[uuid.UUID]string) map[string]pathRegion {
+	grouped := make(map[string]pathRegion, len(probes))
+	for _, p := range probes {
+		region := regions[p.ID]
+		if p.RawServer == "" || region == "" {
+			continue
+		}
+		source := sources[p.ID]
+		if source == "" {
+			source = "unknown"
+		}
+		previous, ok := grouped[p.RawServer]
+		if !ok {
+			grouped[p.RawServer] = pathRegion{region: region, source: source}
+			continue
+		}
+		if previous.region != region || previous.source != source {
+			previous.conflict = true
+			grouped[p.RawServer] = previous
+		}
+	}
+	return grouped
 }
 
 // applyRegionUpdates writes the measured exit region for probed nodes and
@@ -368,7 +425,7 @@ func (h *Handler) buildCheckRecords(
 // are measured per round, and without propagation the other siblings keep a
 // stale region for days (2026-11-15: subscription showed US for nodes whose
 // daytime exit was HK, because their last probe was a night round).
-func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid.UUID]string) {
+func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid.UUID]string, regionSources map[uuid.UUID]string) {
 	if len(regionUpdates) == 0 {
 		return
 	}
@@ -379,52 +436,28 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 	// checker dials raw, so exit geo follows raw, and grouping by column
 	// painted JP-named nodes with US verdicts from unrelated US-v6 nodes.
 	ids := make([]uuid.UUID, 0, len(regionUpdates))
-	caseExpr := "CASE id"
-	args := make([]any, 0, len(regionUpdates)*2)
-	for nodeID, region := range regionUpdates {
-		ids = append(ids, nodeID)
-		args = append(args, nodeID, region)
-		caseExpr += " WHEN ? THEN ?"
+	for id := range regionUpdates {
+		ids = append(ids, id)
 	}
-	caseExpr += " ELSE '' END"
-	var rows []struct {
-		RawServer string
-		Region    string
-	}
-	// Placeholder order MUST match the SQL text: t's `IN ?` binds ids, then
-	// the CASE pairs bind, then m's `IN ?` binds ids again. The previous
-	// layout interleaved them wrong and every round failed with
-	// "syntax error at WHEN" (2026-11-15, 3 checker rounds).
-	bind := make([]any, 0, len(ids)*2+len(args))
-	for _, id := range ids {
-		bind = append(bind, id)
-	}
-	bind = append(bind, args...)
-	for _, id := range ids {
-		bind = append(bind, id)
-	}
-	if err := h.db.WithContext(ctx).Raw(`
-		SELECT DISTINCT ON (raw_srv) raw_srv, m.region
-		FROM (
-		    SELECT id AS nid, COALESCE(raw::jsonb->>'server', server) AS raw_srv
-		    FROM nodes WHERE id IN ?
-		) t
-		JOIN ( SELECT id AS nid, `+caseExpr+` AS region FROM nodes WHERE id IN ? ) m
-		  ON m.nid = t.nid
-	`, bind...).Scan(&rows).Error; err != nil {
-		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region sibling lookup failed")
+	var probes []regionProbeRow
+	if err := h.db.WithContext(ctx).Model(&model.Node{}).
+		Select("id, COALESCE(raw::jsonb->>'server', server) AS raw_server").
+		Where("id IN ?", ids).Scan(&probes).Error; err != nil {
+		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region probe lookup failed")
 		return
 	}
-	for _, row := range rows {
-		if row.RawServer == "" || row.Region == "" {
+	byRawServer := groupRegionObservations(probes, regionUpdates, regionSources)
+	for rawServer, value := range byRawServer {
+		if value.conflict {
+			log.Warn().Str("raw_server", rawServer).Msg("checker: conflicting region observations; skip sibling propagation")
 			continue
 		}
 		if err := h.db.WithContext(ctx).Exec(`
-			UPDATE nodes SET region = ?, updated_at = NOW()
+			UPDATE nodes SET region = ?, region_source = ?, updated_at = NOW()
 			WHERE archived_at IS NULL AND alive = true
 			  AND COALESCE(raw::jsonb->>'server', server) = ?
-			  AND region IS DISTINCT FROM ?`, row.Region, row.RawServer, row.Region).Error; err != nil {
-			log.Warn().Err(err).Str("raw_server", row.RawServer).Msg("checker: region sibling update failed")
+			  AND (region IS DISTINCT FROM ? OR region_source IS DISTINCT FROM ?)`, value.region, value.source, rawServer, value.region, value.source).Error; err != nil {
+			log.Warn().Err(err).Str("raw_server", rawServer).Msg("checker: region sibling update failed")
 		}
 	}
 }

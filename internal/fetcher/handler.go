@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/source"
+	"github.com/gin-gonic/gin"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/rs/zerolog/log"
 )
 
@@ -52,6 +52,13 @@ func (h *Handler) GetSources(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, api.FetchSourcesResponse{Sources: details})
+}
+
+func int64Value(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // PostResults handles POST /api/v1/fetch/results.

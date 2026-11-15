@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -21,7 +21,7 @@ type geoipEntry struct {
 // enrichRegionGeoIP fills region for alive nodes that mihomo didn't provide a
 // region for, by resolving the server address and querying ip-api.com batch.
 // Mutates regionUpdates in place. Silently skips on any error (best-effort).
-func enrichRegionGeoIP(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID, regionUpdates map[uuid.UUID]string) {
+func enrichRegionGeoIP(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID, regionUpdates map[uuid.UUID]string, regionSources map[uuid.UUID]string) {
 	if len(nodeIDs) == 0 {
 		return
 	}
@@ -100,6 +100,7 @@ func enrichRegionGeoIP(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID, re
 			if nodeID, ok := ipToNode[r.Query]; ok {
 				if _, exists := regionUpdates[nodeID]; !exists {
 					regionUpdates[nodeID] = r.CountryCode
+					regionSources[nodeID] = "inbound_mmdb"
 				}
 			}
 		}

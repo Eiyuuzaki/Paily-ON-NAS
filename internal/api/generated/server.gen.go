@@ -297,14 +297,15 @@ type CheckDeepResult struct {
 	JitterMs     int                     `json:"jitter_ms"`
 	Metadata     *map[string]interface{} `json:"metadata,omitempty"`
 	Region       *string                 `json:"region,omitempty"`
+	RegionSource *string                 `json:"region_source,omitempty"`
 	SpeedKbps    *int                    `json:"speed_kbps,omitempty"`
 	Streaming    *map[string]bool        `json:"streaming,omitempty"`
 }
 
 // CheckInitialResult defines model for CheckInitialResult.
 type CheckInitialResult struct {
-	LatencyMs  int    `json:"latency_ms"`
-	FailReason string `json:"fail_reason,omitempty"`
+	FailReason *string `json:"fail_reason,omitempty"`
+	LatencyMs  int     `json:"latency_ms"`
 }
 
 // CheckLogEntry defines model for CheckLogEntry.
@@ -400,14 +401,6 @@ type FetchResult struct {
 	UsageInfo *UsageInfo                `json:"usage_info,omitempty"`
 }
 
-// UsageInfo defines model for UsageInfo.
-type UsageInfo struct {
-	Download int64 `json:"download"`
-	Expire   int64 `json:"expire"`
-	Total    int64 `json:"total"`
-	Upload   int64 `json:"upload"`
-}
-
 // FetchResultsRequest defines model for FetchResultsRequest.
 type FetchResultsRequest struct {
 	Results []FetchResult `json:"results"`
@@ -486,11 +479,14 @@ type NodeDetail struct {
 	Protocol             string                      `json:"protocol"`
 	Raw                  *map[string]interface{}     `json:"raw,omitempty"`
 	Region               string                      `json:"region"`
-	Score                float64                     `json:"score"`
-	Server               string                      `json:"server"`
-	Sources              *[]SourceSummary            `json:"sources,omitempty"`
-	TagScores            *map[string]float64         `json:"tag_scores,omitempty"`
-	UpdatedAt            *time.Time                  `json:"updated_at,omitempty"`
+
+	// RegionSource Evidence source for region: native_egress, legacy_egress, inbound_mmdb, checker_unspecified, unknown
+	RegionSource *string             `json:"region_source,omitempty"`
+	Score        float64             `json:"score"`
+	Server       string              `json:"server"`
+	Sources      *[]SourceSummary    `json:"sources,omitempty"`
+	TagScores    *map[string]float64 `json:"tag_scores,omitempty"`
+	UpdatedAt    *time.Time          `json:"updated_at,omitempty"`
 }
 
 // NodeListResponse defines model for NodeListResponse.
@@ -516,9 +512,12 @@ type NodeSummary struct {
 	LatestLatencyMs    *int               `json:"latest_latency_ms,omitempty"`
 	Protocol           string             `json:"protocol"`
 	Region             string             `json:"region"`
-	Score              float64            `json:"score"`
-	Server             string             `json:"server"`
-	Sources            *[]SourceSummary   `json:"sources,omitempty"`
+
+	// RegionSource Evidence source for region: native_egress, legacy_egress, inbound_mmdb, checker_unspecified, unknown
+	RegionSource *string          `json:"region_source,omitempty"`
+	Score        float64          `json:"score"`
+	Server       string           `json:"server"`
+	Sources      *[]SourceSummary `json:"sources,omitempty"`
 }
 
 // PaginationInfo defines model for PaginationInfo.
@@ -552,26 +551,24 @@ type SourceCreateRequestType string
 
 // SourceDetail defines model for SourceDetail.
 type SourceDetail struct {
-	Content    *string            `json:"content,omitempty"`
-	CreatedAt  *time.Time         `json:"created_at,omitempty"`
-	Id         openapi_types.UUID `json:"id"`
-	Identifier string             `json:"identifier"`
-	IgnoreDead *bool              `json:"ignore_dead,omitempty"`
-	Info       string             `json:"info"`
+	AliveNodeCount *int               `json:"alive_node_count,omitempty"`
+	Content        *string            `json:"content,omitempty"`
+	CreatedAt      *time.Time         `json:"created_at,omitempty"`
+	Download       *int64             `json:"download,omitempty"`
+	Expire         *int64             `json:"expire,omitempty"`
+	Id             openapi_types.UUID `json:"id"`
+	Identifier     string             `json:"identifier"`
+	IgnoreDead     *bool              `json:"ignore_dead,omitempty"`
+	Info           string             `json:"info"`
 
 	// LatestFetchNodeCount Node count from the most recent successful fetch (subscribe sources only)
 	LatestFetchNodeCount *int               `json:"latest_fetch_node_count,omitempty"`
-	Status               SourceDetailStatus `json:"status"`
-	Type                 SourceDetailType   `json:"type"`
 	Priority             *int               `json:"priority,omitempty"`
-	Upload               *int64             `json:"upload,omitempty"`
-	Download             *int64             `json:"download,omitempty"`
+	Status               SourceDetailStatus `json:"status"`
 	Total                *int64             `json:"total,omitempty"`
-	Expire               *int64             `json:"expire,omitempty"`
-
-	// AliveNodeCount How many of this source's nodes are currently alive
-	AliveNodeCount *int       `json:"alive_node_count,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	Type                 SourceDetailType   `json:"type"`
+	UpdatedAt            *time.Time         `json:"updated_at,omitempty"`
+	Upload               *int64             `json:"upload,omitempty"`
 }
 
 // SourceDetailStatus defines model for SourceDetail.Status.
@@ -600,24 +597,22 @@ type SourceSearchRequest struct {
 
 // SourceSummary defines model for SourceSummary.
 type SourceSummary struct {
-	Content    *string            `json:"content,omitempty"`
-	Id         openapi_types.UUID `json:"id"`
-	Identifier string             `json:"identifier"`
-	IgnoreDead *bool              `json:"ignore_dead,omitempty"`
-	Info       string             `json:"info"`
+	AliveNodeCount *int               `json:"alive_node_count,omitempty"`
+	Content        *string            `json:"content,omitempty"`
+	Download       *int64             `json:"download,omitempty"`
+	Expire         *int64             `json:"expire,omitempty"`
+	Id             openapi_types.UUID `json:"id"`
+	Identifier     string             `json:"identifier"`
+	IgnoreDead     *bool              `json:"ignore_dead,omitempty"`
+	Info           string             `json:"info"`
 
 	// LatestFetchNodeCount Node count from the most recent successful fetch (subscribe sources only)
 	LatestFetchNodeCount *int                `json:"latest_fetch_node_count,omitempty"`
-	Status               SourceSummaryStatus `json:"status"`
-	Type                 SourceSummaryType   `json:"type"`
 	Priority             *int                `json:"priority,omitempty"`
-	Upload               *int64              `json:"upload,omitempty"`
-	Download             *int64              `json:"download,omitempty"`
+	Status               SourceSummaryStatus `json:"status"`
 	Total                *int64              `json:"total,omitempty"`
-	Expire               *int64              `json:"expire,omitempty"`
-
-	// AliveNodeCount How many of this source's nodes are currently alive
-	AliveNodeCount *int `json:"alive_node_count,omitempty"`
+	Type                 SourceSummaryType   `json:"type"`
+	Upload               *int64              `json:"upload,omitempty"`
 }
 
 // SourceSummaryStatus defines model for SourceSummary.Status.
@@ -680,6 +675,14 @@ type StatsResponse struct {
 
 	// TotalSources Total number of sources
 	TotalSources int `json:"total_sources"`
+}
+
+// UsageInfo defines model for UsageInfo.
+type UsageInfo struct {
+	Download int64 `json:"download"`
+	Expire   int64 `json:"expire"`
+	Total    int64 `json:"total"`
+	Upload   int64 `json:"upload"`
 }
 
 // LogCheckListParams defines parameters for LogCheckList.
@@ -863,7 +866,7 @@ type ServerInterface interface {
 	// Refresh access token
 	// (POST /api/v1/auth/refresh)
 	AuthRefresh(c *gin.Context)
-	// Get all node metadata for checker
+	// Get the tiered probe set for checker
 	// (GET /api/v1/check/nodes)
 	CheckGetNodes(c *gin.Context)
 	// Submit check results from checker

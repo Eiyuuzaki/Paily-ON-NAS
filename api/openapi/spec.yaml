@@ -75,6 +75,12 @@ components:
         status: { type: string, enum: [active, dead] }
         ignore_dead: { type: boolean }
         content: { type: string }
+        priority: { type: integer }
+        upload: { type: integer, format: int64 }
+        download: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+        expire: { type: integer, format: int64 }
+        alive_node_count: { type: integer }
         latest_fetch_node_count:
           {
             type: integer,
@@ -87,6 +93,12 @@ components:
         - type: object
           properties:
             content: { type: string }
+            priority: { type: integer }
+            upload: { type: integer, format: int64 }
+            download: { type: integer, format: int64 }
+            total: { type: integer, format: int64 }
+            expire: { type: integer, format: int64 }
+            alive_node_count: { type: integer }
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
 
@@ -105,6 +117,7 @@ components:
         identifier: { type: string }
         info: { type: string }
         content: { type: string }
+        priority: { type: integer }
 
     SourceIgnoreDeadRequest:
       type: object
@@ -137,6 +150,7 @@ components:
         server: { type: string }
         protocol: { type: string }
         region: { type: string }
+        region_source: { type: string, description: "Evidence source for region: native_egress, legacy_egress, inbound_mmdb, checker_unspecified, unknown" }
         alive: { type: boolean }
         score: { type: number, format: double }
         latest_latency_ms: { type: integer }
@@ -280,6 +294,17 @@ components:
         nodes:
           type: array
           items: { type: object, additionalProperties: true }
+        usage_info:
+          $ref: "#/components/schemas/UsageInfo"
+
+    UsageInfo:
+      type: object
+      required: [upload, download, total, expire]
+      properties:
+        upload: { type: integer, format: int64 }
+        download: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+        expire: { type: integer, format: int64 }
 
     FetchResultsRequest:
       type: object
@@ -321,6 +346,7 @@ components:
         jitter_ms: { type: integer }
         speed_kbps: { type: integer, default: 0 }
         region: { type: string }
+        region_source: { type: string }
         streaming: { type: object, additionalProperties: { type: boolean } }
         metadata: { type: object, additionalProperties: true }
 
