@@ -35,6 +35,10 @@ const KEY_LABELS: Record<string, string> = {
   node_alive_check_window_minutes: '存活联合评价窗口（分钟，0=单次提交即决定）',
   check_run_history_days: 'Checker 提交记录最大历史天数',
   priority_ratio: '机场节点占比（0~1，越高机场节点越多）',
+  check_rep_per_server: '每入口每轮探测代表数（0=全量）',
+  check_rep_min_group: '小源全测阈值（活节点数≤此值不抽代表）',
+  ingress_max_new_per_source: '免费源每轮新节点上限（0=不限）',
+  node_dead_retention_days: '死透归档保留天数（0=不归档）',
 }
 
 const loading = ref(false)
