@@ -17,6 +17,7 @@ var pathCapabilityNames = []string{
 }
 
 type pathQualityObservation struct {
+	ObservedRuns    int       `gorm:"column:observed_runs"`
 	PathKey         string    `gorm:"column:path_key"`
 	AvgLatencyMs    int       `gorm:"column:avg_latency_ms"`
 	JitterMs        int       `gorm:"column:jitter_ms"`
@@ -50,6 +51,7 @@ type pathQualityItem struct {
 	FailReasons   map[string]int                 `json:"fail_reasons"`
 	ShadowClass   string                         `json:"shadow_class"`
 	ShadowReasons []string                       `json:"shadow_reasons"`
+	ObservedRuns  int                            `json:"observed_runs"`
 	LastObserved  time.Time                      `json:"last_observed"`
 	latencies     []int                          `json:"-"`
 	latencyTotal  int64                          `json:"-"`
@@ -71,7 +73,11 @@ func (h *PathQualityHandler) Get(c *gin.Context) {
 	}
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	const query = `
-WITH latest AS (
+WITH run_counts AS (
+    SELECT metadata::jsonb->>'path_key' AS path_key, COUNT(DISTINCT check_run_id) AS observed_runs
+    FROM node_deep_checks WHERE checked_at >= ? AND jsonb_exists(metadata::jsonb, 'path_key')
+    GROUP BY metadata::jsonb->>'path_key'
+), latest AS (
     SELECT DISTINCT ON (node_id) node_id, avg_latency_ms, jitter_ms, checked_at,
            streaming_result, metadata::jsonb AS metadata, metadata::jsonb->>'path_key' AS path_key
     FROM node_deep_checks
@@ -85,17 +91,18 @@ WITH latest AS (
         GROUP BY node_id, COALESCE(NULLIF(fail_reason, ''), 'unknown')
     ) nic GROUP BY nic.node_id
 )
-SELECT latest.path_key, latest.avg_latency_ms, latest.jitter_ms, latest.checked_at,
+SELECT latest.path_key, COALESCE(run_counts.observed_runs, 0) AS observed_runs, latest.avg_latency_ms, latest.jitter_ms, latest.checked_at,
        latest.streaming_result, COALESCE(failure_counts.fail_reasons_json, '{}'::jsonb)::text AS fail_reasons_json, n.protocol,
        COALESCE(NULLIF(latest.metadata->>'region', ''), '') AS region,
        COALESCE(NULLIF(latest.metadata->>'region_source', ''), 'unknown') AS region_source, n.alive
 FROM latest JOIN nodes n ON n.id = latest.node_id
+LEFT JOIN run_counts ON run_counts.path_key = latest.path_key
 LEFT JOIN failure_counts ON failure_counts.node_id = latest.node_id
 WHERE n.archived_at IS NULL AND latest.path_key <> ''
 ORDER BY latest.checked_at DESC
 `
 	var observations []pathQualityObservation
-	if err := h.db.WithContext(c.Request.Context()).Raw(query, cutoff, cutoff).Scan(&observations).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Raw(query, cutoff, cutoff, cutoff).Scan(&observations).Error; err != nil {
 		log.Error().Err(err).Msg("path quality query failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "path quality query failed"})
 		return
@@ -125,6 +132,9 @@ func aggregatePathQuality(observations []pathQualityObservation) []pathQualityIt
 			byKey[observation.PathKey] = item
 		}
 		item.Nodes++
+		if observation.ObservedRuns > item.ObservedRuns {
+			item.ObservedRuns = observation.ObservedRuns
+		}
 		if observation.Alive {
 			item.Alive++
 		}
@@ -219,6 +229,9 @@ func classifyShadow(item *pathQualityItem) (string, []string) {
 	}
 	if len(item.RegionSources) == 0 || (len(item.RegionSources) == 1 && item.RegionSources[0] == "unknown") {
 		reasons = append(reasons, "region_evidence_unknown")
+	}
+	if item.ObservedRuns < 3 {
+		reasons = append(reasons, "fewer_than_3_checker_runs")
 	}
 	if len(reasons) == 0 && aliveRatio == 1 && item.AvgLatencyMs != nil && *item.AvgLatencyMs <= 1500 && chat.Failed == 0 && chat.Unknown == 0 {
 		return "production_candidate", reasons
