@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -72,7 +73,7 @@ WITH latest AS (
     SELECT DISTINCT ON (node_id) node_id, avg_latency_ms, jitter_ms, checked_at,
            streaming_result, metadata::jsonb AS metadata, metadata::jsonb->>'path_key' AS path_key
     FROM node_deep_checks
-    WHERE checked_at >= ? AND metadata::jsonb ? 'path_key'
+    WHERE checked_at >= ? AND jsonb_exists(metadata::jsonb, 'path_key')
     ORDER BY node_id, checked_at DESC, id DESC
 ), failure_counts AS (
     SELECT nic.node_id, jsonb_object_agg(nic.reason, nic.reason_count) AS fail_reasons_json
@@ -83,7 +84,7 @@ WITH latest AS (
     ) nic GROUP BY nic.node_id
 )
 SELECT latest.path_key, latest.avg_latency_ms, latest.jitter_ms, latest.checked_at,
-       latest.streaming_result, COALESCE(failure_counts.fail_reasons_json, '{}'::jsonb) AS fail_reasons_json, n.protocol,
+       latest.streaming_result, COALESCE(failure_counts.fail_reasons_json, '{}'::jsonb)::text AS fail_reasons_json, n.protocol,
        COALESCE(NULLIF(latest.metadata->>'region', ''), '') AS region,
        COALESCE(NULLIF(latest.metadata->>'region_source', ''), 'unknown') AS region_source, n.alive
 FROM latest JOIN nodes n ON n.id = latest.node_id
@@ -93,6 +94,7 @@ ORDER BY latest.checked_at DESC
 `
 	var observations []pathQualityObservation
 	if err := h.db.WithContext(c.Request.Context()).Raw(query, cutoff, cutoff).Scan(&observations).Error; err != nil {
+		log.Error().Err(err).Msg("path quality query failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "path quality query failed"})
 		return
 	}
