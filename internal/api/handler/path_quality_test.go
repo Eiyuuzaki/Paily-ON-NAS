@@ -27,6 +27,9 @@ func TestAggregatePathQualityUsesTriStateCapabilities(t *testing.T) {
 	if c := p.Capabilities["access-netflix"]; c.Unknown != 2 || c.Passed != 0 || c.Failed != 0 {
 		t.Fatalf("netflix=%+v", c)
 	}
+	if p.ObservedRuns != 0 {
+		t.Fatalf("observed runs=%d", p.ObservedRuns)
+	}
 	if p.ShadowClass != "standby_candidate" {
 		t.Fatalf("shadow class=%s", p.ShadowClass)
 	}
