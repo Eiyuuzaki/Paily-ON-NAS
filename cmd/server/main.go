@@ -365,6 +365,10 @@ func main() {
 		})
 	})
 
+	// GET /api/v1/observability/paths?hours=168 (read-only; never drives distribution).
+	pathQualityHandler := handler.NewPathQualityHandler(database)
+	engine.GET("/api/v1/observability/paths", pathQualityHandler.Get)
+
 	// GET /api/v1/observability/health-trend?hours=48
 	engine.GET("/api/v1/observability/health-trend", func(c *gin.Context) {
 		hours := parseObsHours(c)
