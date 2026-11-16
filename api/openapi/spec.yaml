@@ -478,6 +478,41 @@ components:
         config: { type: object, additionalProperties: true }
 
     # ── Error ─────────────────────────────────────────────────────────────────
+    PathCapabilityCount:
+      type: object
+      required: [passed, failed, unknown]
+      properties:
+        passed: { type: integer }
+        failed: { type: integer }
+        unknown: { type: integer }
+
+    PathQualityItem:
+      type: object
+      required: [path_key, nodes, alive, capabilities, last_observed]
+      properties:
+        path_key: { type: string }
+        nodes: { type: integer }
+        alive: { type: integer }
+        avg_latency_ms: { type: integer, nullable: true }
+        p50_latency_ms: { type: integer, nullable: true }
+        avg_jitter_ms: { type: integer, nullable: true }
+        protocols: { type: array, items: { type: string } }
+        regions: { type: array, items: { type: string } }
+        region_sources: { type: array, items: { type: string } }
+        capabilities: { type: object, additionalProperties: { $ref: '#/components/schemas/PathCapabilityCount' } }
+        last_observed: { type: string, format: date-time }
+
+    PathQualityResponse:
+      type: object
+      required: [identity_kind, window_hours, total_paths, total_nodes, routing_changed, paths]
+      properties:
+        identity_kind: { type: string, enum: [ingress_fingerprint] }
+        window_hours: { type: integer }
+        total_paths: { type: integer }
+        total_nodes: { type: integer }
+        routing_changed: { type: boolean, enum: [false] }
+        paths: { type: array, items: { $ref: '#/components/schemas/PathQualityItem' } }
+
     ErrorResponse:
       type: object
       required: [error]
@@ -485,6 +520,27 @@ components:
         error: { type: string }
 
 paths:
+  /api/v1/observability/paths:
+    get:
+      operationId: ObservabilityPathQuality
+      tags: [observability]
+      summary: Read-only latest-per-node entry fingerprint quality aggregates
+      description: >
+        Groups Checker observations by path_key (protocol, dial target, port, SNI,
+        transport, path and gateway). This is an ingress/configuration fingerprint,
+        not a proven egress route or failure domain. No routing decisions are changed.
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - { name: hours, in: query, schema: { type: integer, minimum: 24, maximum: 720, default: 168 } }
+      responses:
+        "200":
+          description: Read-only path observations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PathQualityResponse" }
+        "401": { description: Unauthorized }
+        "500": { description: Query failed }
+
   # ── Auth ──────────────────────────────────────────────────────────────────
   /api/v1/auth/login:
     post:

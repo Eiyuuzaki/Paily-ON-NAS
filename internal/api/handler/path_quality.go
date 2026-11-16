@@ -21,6 +21,7 @@ type pathQualityObservation struct {
 	JitterMs        int       `gorm:"column:jitter_ms"`
 	CheckedAt       time.Time `gorm:"column:checked_at"`
 	StreamingResult string    `gorm:"column:streaming_result"`
+	Metadata        string    `gorm:"column:metadata"`
 	Protocol        string    `gorm:"column:protocol"`
 	Region          string    `gorm:"column:region"`
 	RegionSource    string    `gorm:"column:region_source"`
@@ -67,13 +68,15 @@ func (h *PathQualityHandler) Get(c *gin.Context) {
 	const query = `
 WITH latest AS (
     SELECT DISTINCT ON (node_id) node_id, avg_latency_ms, jitter_ms, checked_at,
-           streaming_result, metadata::jsonb->>'path_key' AS path_key
+           streaming_result, metadata::jsonb AS metadata, metadata::jsonb->>'path_key' AS path_key
     FROM node_deep_checks
     WHERE checked_at >= ? AND metadata::jsonb ? 'path_key'
     ORDER BY node_id, checked_at DESC, id DESC
 )
 SELECT latest.path_key, latest.avg_latency_ms, latest.jitter_ms, latest.checked_at,
-       latest.streaming_result, n.protocol, n.region, n.region_source, n.alive
+       latest.streaming_result, n.protocol,
+       COALESCE(NULLIF(latest.metadata->>'region', ''), '') AS region,
+       COALESCE(NULLIF(latest.metadata->>'region_source', ''), 'unknown') AS region_source, n.alive
 FROM latest JOIN nodes n ON n.id = latest.node_id
 WHERE n.archived_at IS NULL AND latest.path_key <> ''
 ORDER BY latest.checked_at DESC
@@ -85,6 +88,7 @@ ORDER BY latest.checked_at DESC
 	}
 	groups := aggregatePathQuality(observations)
 	c.JSON(http.StatusOK, gin.H{
+		"identity_kind":   "ingress_fingerprint",
 		"window_hours":    hours,
 		"total_paths":     len(groups),
 		"total_nodes":     len(observations),
