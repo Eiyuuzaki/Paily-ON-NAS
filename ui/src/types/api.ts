@@ -73,6 +73,7 @@ export interface NodeSummary {
     server: string
     protocol: string
     region: string
+    region_source?: string
     alive: boolean
     score: number
     latest_latency_ms?: number

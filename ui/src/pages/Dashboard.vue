@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, defineAsyncComponent } from 'vue'
 import { useDisplay } from 'vuetify'
 import { getStats } from '../api/stats'
 import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '../api/traffic'
@@ -14,9 +14,8 @@ import {
   type FailReasonsResponse,
   type HealthTrendResponse,
 } from '../api/observability'
-import VChart from 'vue-echarts'
-import 'echarts'
 import type { EChartsOption } from 'echarts'
+const ObservabilityChart = defineAsyncComponent(() => import('../components/ObservabilityChart.vue'))
 
 // 宽屏用 dialog 承载接入指引（避免展开面板把同 grid 行的卡片拉长），
 // 窄屏是单列布局，用 accordion 就地展开。
@@ -545,7 +544,7 @@ onMounted(() => {
             <v-skeleton-loader type="image" height="240" />
           </template>
           <template v-else-if="failData && failData.reasons.length">
-            <VChart :option="failOption" autoresize style="height: 240px" />
+            <ObservabilityChart :option="failOption" />
           </template>
           <div v-else class="obs-empty">暂无失败记录，测活轮次跑完自动出现</div>
         </div>
@@ -559,12 +558,14 @@ onMounted(() => {
             <v-skeleton-loader type="image" height="240" />
           </template>
           <template v-else-if="trendData && trendData.runs.length">
-            <VChart :option="trendOption" autoresize style="height: 240px" />
+            <ObservabilityChart :option="trendOption" />
           </template>
           <div v-else class="obs-empty">还没有 check 轮次记录</div>
         </div>
       </v-card>
     </div>
+
+
 
     <!-- 流量统计接入指引（宽屏用 dialog，避免把同 grid 行的卡片拉长） -->
     <v-dialog v-model="trafficHelpOpen" max-width="560" scrollable>
@@ -861,6 +862,7 @@ onMounted(() => {
 }
 
 /* ── 订阅卡 ── */
+
 .sub-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

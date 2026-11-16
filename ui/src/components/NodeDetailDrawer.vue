@@ -13,6 +13,16 @@ const emit = defineEmits<{
 }>()
 
 const detail = ref<NodeDetail | null>(null)
+
+function regionSourceLabel(source?: string): string {
+  switch (source) {
+    case 'native_egress': return '出口实测'
+    case 'legacy_egress': return '旧式出口探测'
+    case 'inbound_mmdb': return '入口地址推测'
+    case 'checker_unspecified': return '旧版 Checker'
+    default: return '来源未知'
+  }
+}
 const loadingDetail = ref(false)
 const activeTab = ref('info')
 
@@ -160,6 +170,7 @@ const deepHeaders = [
               <v-col cols="6">
                 <div class="text-caption text-disabled">区域</div>
                 <div>{{ detail.region || '—' }}</div>
+                <div class="text-caption text-disabled">{{ regionSourceLabel(detail.region_source) }}</div>
               </v-col>
               <v-col cols="12" class="mt-2">
                 <div class="text-caption text-disabled">服务器</div>
