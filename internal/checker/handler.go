@@ -144,6 +144,14 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		    WHERE archived_at IS NULL AND alive = true
 		), reps AS (
 		    SELECT id FROM ranked WHERE total <= ? OR rn <= ?
+		    UNION
+		    SELECT id FROM (
+		        SELECT id,
+		            row_number() OVER (PARTITION BY region ORDER BY score DESC, hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rgn,
+		            count(*) OVER (PARTITION BY region) AS rtotal
+		        FROM nodes
+		        WHERE archived_at IS NULL AND alive = true AND coalesce(region, '') <> ''
+		    ) region_ranked WHERE rtotal <= 3 OR rgn <= 1
 		)
 		SELECT * FROM nodes n
 		WHERE n.archived_at IS NULL
