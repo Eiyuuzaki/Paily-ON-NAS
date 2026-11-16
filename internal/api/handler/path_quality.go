@@ -48,6 +48,8 @@ type pathQualityItem struct {
 	RegionSources []string                       `json:"region_sources"`
 	Capabilities  map[string]pathCapabilityCount `json:"capabilities"`
 	FailReasons   map[string]int                 `json:"fail_reasons"`
+	ShadowClass   string                         `json:"shadow_class"`
+	ShadowReasons []string                       `json:"shadow_reasons"`
 	LastObserved  time.Time                      `json:"last_observed"`
 	latencies     []int                          `json:"-"`
 	latencyTotal  int64                          `json:"-"`
@@ -171,6 +173,7 @@ func aggregatePathQuality(observations []pathQualityObservation) []pathQualityIt
 			count.Unknown = item.Nodes - tested
 			item.Capabilities[name] = count
 		}
+		item.ShadowClass, item.ShadowReasons = classifyShadow(item)
 		sort.Strings(item.Protocols)
 		sort.Strings(item.Regions)
 		sort.Strings(item.RegionSources)
@@ -186,6 +189,39 @@ func aggregatePathQuality(observations []pathQualityObservation) []pathQualityIt
 		return out[i].PathKey < out[j].PathKey
 	})
 	return out
+}
+
+func classifyShadow(item *pathQualityItem) (string, []string) {
+	reasons := make([]string, 0, 4)
+	if item.Nodes == 0 {
+		return "observation_only", []string{"no_nodes"}
+	}
+	aliveRatio := float64(item.Alive) / float64(item.Nodes)
+	if aliveRatio < 0.5 {
+		reasons = append(reasons, "alive_ratio_below_50pct")
+	}
+	if item.AvgLatencyMs == nil {
+		reasons = append(reasons, "no_latency_sample")
+	} else if *item.AvgLatencyMs > 1500 {
+		reasons = append(reasons, "avg_latency_over_1500ms")
+	}
+	chat := item.Capabilities["access-chatgpt"]
+	if chat.Failed > 0 {
+		reasons = append(reasons, "chatgpt_failures_observed")
+	}
+	if chat.Unknown > 0 {
+		reasons = append(reasons, "chatgpt_unmeasured")
+	}
+	if len(item.RegionSources) == 0 || (len(item.RegionSources) == 1 && item.RegionSources[0] == "unknown") {
+		reasons = append(reasons, "region_evidence_unknown")
+	}
+	if len(reasons) == 0 && aliveRatio == 1 && item.AvgLatencyMs != nil && *item.AvgLatencyMs <= 1500 && chat.Failed == 0 && chat.Unknown == 0 {
+		return "production_candidate", reasons
+	}
+	if aliveRatio >= 0.5 && item.AvgLatencyMs != nil && *item.AvgLatencyMs <= 3000 {
+		return "standby_candidate", reasons
+	}
+	return "observation_only", reasons
 }
 
 func appendUnique(values []string, value string) []string {

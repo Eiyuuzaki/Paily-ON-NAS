@@ -501,6 +501,8 @@ components:
         region_sources: { type: array, items: { type: string } }
         capabilities: { type: object, additionalProperties: { $ref: '#/components/schemas/PathCapabilityCount' } }
         fail_reasons: { type: object, additionalProperties: { type: integer } }
+        shadow_class: { type: string, enum: [production_candidate, standby_candidate, observation_only] }
+        shadow_reasons: { type: array, items: { type: string } }
         last_observed: { type: string, format: date-time }
 
     PathQualityResponse:
