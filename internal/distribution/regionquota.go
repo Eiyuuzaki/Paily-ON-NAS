@@ -24,6 +24,11 @@ func isSkipCert(e *cache.NodeCacheEntry) bool {
 
 func scoreDesc(xs []*cache.NodeCacheEntry) {
 	sort.SliceStable(xs, func(i, j int) bool {
+		// Source priority first: paid/highest (1/2) rank above free (0) so a
+		// trusted paid airport is preferred over a same-score free node.
+		if xs[i].SourcePriority != xs[j].SourcePriority {
+			return xs[i].SourcePriority > xs[j].SourcePriority
+		}
 		if xs[i].Score != xs[j].Score {
 			return xs[i].Score > xs[j].Score
 		}
@@ -88,9 +93,12 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			switch {
 			case isCFNode(e.Raw):
 				cf = append(cf, e)
-			case isSkipCert(e):
+			case isSkipCert(e) && e.SourcePriority < 1:
+				// Self-signed from free/aggregator sources: last-resort only.
 				skipOther = append(skipOther, e)
 			default:
+				// Secure, OR a trusted paid/highest source (priority>=1) even if it
+				// uses a self-signed cert — the user trusts the paid provider.
 				secureOther = append(secureOther, e)
 			}
 		}
