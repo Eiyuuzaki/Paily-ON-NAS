@@ -106,6 +106,8 @@ func (h *Handler) Distribute(
 				continue
 			}
 		}
+		// Unencrypted / self-signed policy is applied inside SelectRegionQuota so
+		// that a region with no secure node can still fall back to self-signed.
 		candidates = append(candidates, e)
 	}
 
@@ -128,12 +130,14 @@ func (h *Handler) Distribute(
 	}
 	maxDistribute := configInt(h.db, "max_distribute", 200)
 	priorityRatio := configFloat(h.db, "priority_ratio", 0.6)
+	_ = priorityRatio // region-quota selection no longer uses the global priority ratio
 	// Cap how many nodes may share one egress (same Worker behind many entry
 	// IPs). Each extra entry point costs a client url-test probe and a checker
 	// probe against the same daily request budget, so shipping hundreds of
 	// them burns the quota without adding redundancy users can perceive.
 	SetPerEgressCap(configInt(h.db, "distribute_per_egress_max", DefaultPerEgressMax))
-	selected := SelectWithPreset(candidates, maxDistribute, preset, priorityRatio)
+	selected := SelectRegionQuota(candidates, configInt(h.db, "cf_per_worker_max", 4), configInt(h.db, "region_other_max", 8))
+	log.Debug().Int("max", maxDistribute).Int("selected", len(selected)).Msg("distribution: region-quota selection")
 
 	log.Debug().
 		Str("format", string(formatName)).

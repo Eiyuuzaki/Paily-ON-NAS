@@ -261,7 +261,10 @@ func (h *Handler) PostResults(c *gin.Context) {
 			return
 		}
 
-		// GeoIP enrichment for nodes without a region (best-effort, from server IP).
+		// Region enrichment: prefer the measured EGRESS IP (accurate exit
+		// country); then fall back to the entry IP for nodes without egress
+		// evidence. This self-heals missing regions every cycle.
+		enrichRegionFromEgress(ctx, collectEgressIPs(results), regionUpdates, regionSources)
 		enrichRegionGeoIP(ctx, h.db, nodeIDs, regionUpdates, regionSources)
 
 		// Apply region updates outside the transaction (best-effort).
