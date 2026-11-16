@@ -37,3 +37,19 @@ func TestAggregatePathQualityUsesTriStateCapabilities(t *testing.T) {
 		t.Fatalf("latencies avg=%v p50=%v", p.AvgLatencyMs, p.P50LatencyMs)
 	}
 }
+
+func TestAggregatePathQualityTreatsNullCapabilityAsUnknown(t *testing.T) {
+	rows := []pathQualityObservation{{PathKey: "p", StreamingResult: "{\"access-chatgpt\":null,\"access-netflix\":false}", Protocol: "vless", RegionSource: "native_egress", Alive: true}}
+	got := aggregatePathQuality(rows)
+	c := got[0].Capabilities["access-chatgpt"]
+	if c.Passed != 0 || c.Failed != 0 || c.Unknown != 1 {
+		t.Fatalf("null capability=%+v", c)
+	}
+	c = got[0].Capabilities["access-netflix"]
+	if c.Passed != 0 || c.Failed != 1 || c.Unknown != 0 {
+		t.Fatalf("false capability=%+v", c)
+	}
+	if c := got[0].Capabilities["quic"]; c.Passed != 0 || c.Failed != 0 || c.Unknown != 1 {
+		t.Fatalf("unprobed QUIC capability=%+v", c)
+	}
+}

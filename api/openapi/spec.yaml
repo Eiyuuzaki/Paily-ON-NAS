@@ -499,7 +499,13 @@ components:
         protocols: { type: array, items: { type: string } }
         regions: { type: array, items: { type: string } }
         region_sources: { type: array, items: { type: string } }
-        capabilities: { type: object, additionalProperties: { $ref: '#/components/schemas/PathCapabilityCount' } }
+        egress_ips: { type: array, items: { type: string }, description: Distinct native egress IP observations; not a path identity }
+        egress_providers: { type: array, items: { type: string } }
+        egress_asns: { type: array, items: { type: integer } }
+        egress_asn_orgs: { type: array, items: { type: string } }
+        egress_observed_runs: { type: integer, description: Checker runs with native egress evidence in the selected window }
+        egress_observation_nodes: { type: integer, description: Latest node observations carrying native egress evidence }
+        capabilities: { type: object, additionalProperties: { $ref: '#/components/schemas/PathCapabilityCount' }, description: Includes quic; unknown until a real QUIC handshake probe is recorded }
         fail_reasons: { type: object, additionalProperties: { type: integer } }
         shadow_class: { type: string, enum: [production_candidate, standby_candidate, observation_only] }
         shadow_reasons: { type: array, items: { type: string } }
@@ -516,6 +522,8 @@ components:
         total_nodes: { type: integer }
         shadow_counts: { type: object, additionalProperties: { type: integer } }
         routing_changed: { type: boolean, enum: [false] }
+        stable_for_scheduling: { type: boolean }
+        stable_for_scheduling_reasons: { type: array, items: { type: string } }
         paths: { type: array, items: { $ref: '#/components/schemas/PathQualityItem' } }
 
     ErrorResponse:

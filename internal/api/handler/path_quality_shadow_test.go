@@ -19,6 +19,19 @@ func TestClassifyShadowConservativeBoundaries(t *testing.T) {
 	if got, _ := classifyShadow(weak); got != "observation_only" {
 		t.Fatalf("weak path got %s", got)
 	}
+	inbound := &pathQualityItem{Nodes: 2, Alive: 2, AvgLatencyMs: intPtr(400), ObservedRuns: 3, RegionSources: []string{"inbound_mmdb"}, Capabilities: map[string]pathCapabilityCount{"access-chatgpt": {Passed: 2}}}
+	if got, reasons := classifyShadow(inbound); got == "production_candidate" || !containsReason(reasons, "region_evidence_untrusted") {
+		t.Fatalf("inbound evidence got %s reasons=%v", got, reasons)
+	}
+}
+
+func containsReason(reasons []string, want string) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func intPtr(v int) *int { return &v }
