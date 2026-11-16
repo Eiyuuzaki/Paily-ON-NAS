@@ -513,6 +513,7 @@ components:
         window_hours: { type: integer }
         total_paths: { type: integer }
         total_nodes: { type: integer }
+        shadow_counts: { type: object, additionalProperties: { type: integer } }
         routing_changed: { type: boolean, enum: [false] }
         paths: { type: array, items: { $ref: '#/components/schemas/PathQualityItem' } }
 

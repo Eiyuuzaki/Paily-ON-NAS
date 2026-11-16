@@ -101,11 +101,16 @@ ORDER BY latest.checked_at DESC
 		return
 	}
 	groups := aggregatePathQuality(observations)
+	shadowCounts := map[string]int{"production_candidate": 0, "standby_candidate": 0, "observation_only": 0}
+	for _, group := range groups {
+		shadowCounts[group.ShadowClass]++
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"identity_kind":   "ingress_fingerprint",
 		"window_hours":    hours,
 		"total_paths":     len(groups),
 		"total_nodes":     len(observations),
+		"shadow_counts":   shadowCounts,
 		"routing_changed": false,
 		"paths":           groups,
 	})
