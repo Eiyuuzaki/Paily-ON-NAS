@@ -500,6 +500,7 @@ components:
         regions: { type: array, items: { type: string } }
         region_sources: { type: array, items: { type: string } }
         capabilities: { type: object, additionalProperties: { $ref: '#/components/schemas/PathCapabilityCount' } }
+        fail_reasons: { type: object, additionalProperties: { type: integer } }
         last_observed: { type: string, format: date-time }
 
     PathQualityResponse:

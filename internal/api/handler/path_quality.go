@@ -25,6 +25,7 @@ type pathQualityObservation struct {
 	Protocol        string    `gorm:"column:protocol"`
 	Region          string    `gorm:"column:region"`
 	RegionSource    string    `gorm:"column:region_source"`
+	FailReasonsJSON string    `gorm:"column:fail_reasons_json"`
 	Alive           bool      `gorm:"column:alive"`
 }
 
@@ -45,6 +46,7 @@ type pathQualityItem struct {
 	Regions       []string                       `json:"regions"`
 	RegionSources []string                       `json:"region_sources"`
 	Capabilities  map[string]pathCapabilityCount `json:"capabilities"`
+	FailReasons   map[string]int                 `json:"fail_reasons"`
 	LastObserved  time.Time                      `json:"last_observed"`
 	latencies     []int                          `json:"-"`
 	latencyTotal  int64                          `json:"-"`
@@ -72,17 +74,25 @@ WITH latest AS (
     FROM node_deep_checks
     WHERE checked_at >= ? AND metadata::jsonb ? 'path_key'
     ORDER BY node_id, checked_at DESC, id DESC
+), failure_counts AS (
+    SELECT nic.node_id, jsonb_object_agg(nic.reason, nic.reason_count) AS fail_reasons_json
+    FROM (
+        SELECT node_id, COALESCE(NULLIF(fail_reason, ''), 'unknown') AS reason, COUNT(*) AS reason_count
+        FROM node_initial_checks WHERE checked_at >= ? AND latency_ms = -1
+        GROUP BY node_id, COALESCE(NULLIF(fail_reason, ''), 'unknown')
+    ) nic GROUP BY nic.node_id
 )
 SELECT latest.path_key, latest.avg_latency_ms, latest.jitter_ms, latest.checked_at,
-       latest.streaming_result, n.protocol,
+       latest.streaming_result, COALESCE(failure_counts.fail_reasons_json, '{}'::jsonb) AS fail_reasons_json, n.protocol,
        COALESCE(NULLIF(latest.metadata->>'region', ''), '') AS region,
        COALESCE(NULLIF(latest.metadata->>'region_source', ''), 'unknown') AS region_source, n.alive
 FROM latest JOIN nodes n ON n.id = latest.node_id
+LEFT JOIN failure_counts ON failure_counts.node_id = latest.node_id
 WHERE n.archived_at IS NULL AND latest.path_key <> ''
 ORDER BY latest.checked_at DESC
 `
 	var observations []pathQualityObservation
-	if err := h.db.WithContext(c.Request.Context()).Raw(query, cutoff).Scan(&observations).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Raw(query, cutoff, cutoff).Scan(&observations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "path quality query failed"})
 		return
 	}
@@ -102,7 +112,7 @@ func aggregatePathQuality(observations []pathQualityObservation) []pathQualityIt
 	for _, observation := range observations {
 		item := byKey[observation.PathKey]
 		if item == nil {
-			item = &pathQualityItem{PathKey: observation.PathKey, Capabilities: make(map[string]pathCapabilityCount)}
+			item = &pathQualityItem{PathKey: observation.PathKey, Capabilities: make(map[string]pathCapabilityCount), FailReasons: make(map[string]int)}
 			byKey[observation.PathKey] = item
 		}
 		item.Nodes++
@@ -115,6 +125,12 @@ func aggregatePathQuality(observations []pathQualityObservation) []pathQualityIt
 		}
 		if observation.JitterMs >= 0 {
 			item.jitterTotal += int64(observation.JitterMs)
+		}
+		var failures map[string]int
+		if json.Unmarshal([]byte(observation.FailReasonsJSON), &failures) == nil {
+			for reason, count := range failures {
+				item.FailReasons[reason] += count
+			}
 		}
 		if observation.CheckedAt.After(item.LastObserved) {
 			item.LastObserved = observation.CheckedAt
