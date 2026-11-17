@@ -39,6 +39,19 @@ const KEY_LABELS: Record<string, string> = {
   check_rep_min_group: '小源全测阈值（活节点数≤此值不抽代表）',
   ingress_max_new_per_source: '免费源每轮新节点上限（0=不限）',
   node_dead_retention_days: '死透归档保留天数（0=不归档）',
+  cf_per_worker_max: '每地区·每个 CF Worker 最多入口数',
+  region_other_max: '每地区·非 CF 节点上限',
+  dist_allow_paid_selfsigned: '允许付费/最高来源使用自签证书',
+  dist_allow_plaintext: '允许明文 HTTP/SOCKS 代理（危险）',
+  dist_selfsigned_fallback: '自签兜底策略',
+  cf_module: 'Cloudflare 号池模块（1=开 / 0=关）',
+  ech_enabled: '启用 ECH 注入（1=开 / 0=关）',
+  check_dead_grace_minutes: '判死后宽限期（分钟，期间保持全量探测）',
+  ingress_max_per_endpoint: '入池·同一端点最大新节点数',
+  ingress_zero_yield_quota: '入池·零产出协议配额',
+  node_never_alive_retention_days: '从未存活节点保留天数（0=不归档）',
+  profile_update_interval: '订阅 profile 更新间隔（小时）',
+  distribute_per_egress_max: '同一出口最多分发数（旧参数，已由每 Worker 配额取代）',
 }
 
 const loading = ref(false)
@@ -50,6 +63,21 @@ const localConfig = reactive<ConfigMap>({})
 const search = ref('')
 
 const EXPR_KEYS = ['node_name_template', 'node_distribute_filter']
+const DIST_KEYS = ['cf_per_worker_max', 'region_other_max', 'dist_allow_paid_selfsigned', 'dist_allow_plaintext', 'dist_selfsigned_fallback']
+// Internal/technical keys that should not appear as editable fields.
+const HIDE_KEYS = ['distribute_per_egress_max', 'cf_module']
+const HIDE_PREFIX = ['cf_usage_']
+const FALLBACK_OPTS = [
+  { title: '不足即补（推荐）', value: 'short' },
+  { title: '仅空白地区补', value: 'empty' },
+  { title: '从不补（最严格）', value: 'none' },
+]
+const showPlainWarn = ref(false)
+function setDistBool(k: string, v: boolean) {
+  if (k === 'dist_allow_plaintext' && v) { showPlainWarn.value = true; return }
+  localConfig[k] = v ? '1' : '0'
+}
+function confirmPlaintext() { localConfig['dist_allow_plaintext'] = '1'; showPlainWarn.value = false }
 
 const DEFAULTS: Record<string, string> = {
   max_distribute: '200',
@@ -78,6 +106,11 @@ const DEFAULTS: Record<string, string> = {
   filename_base64: 'Paily Connect.txt',
   node_alive_check_window_minutes: '240',
   check_run_history_days: '7',
+  cf_per_worker_max: '4',
+  region_other_max: '16',
+  dist_allow_paid_selfsigned: '1',
+  dist_allow_plaintext: '0',
+  dist_selfsigned_fallback: 'short',
 }
 
 function showSnack(text: string, color = 'success') {
@@ -137,7 +170,7 @@ async function saveConfig() {
 }
 
 const normalKeys = computed(() =>
-  serverKeys.value.filter((k) => !EXPR_KEYS.includes(k) && (!search.value || k.includes(search.value) ||
+  serverKeys.value.filter((k) => !EXPR_KEYS.includes(k) && !DIST_KEYS.includes(k) && !HIDE_KEYS.includes(k) && !HIDE_PREFIX.some((p) => k.startsWith(p)) && (!search.value || k.includes(search.value) ||
     (KEY_LABELS[k] ?? '').includes(search.value))),
 )
 
@@ -173,6 +206,36 @@ onMounted(loadConfig)
         />
       </v-card-text>
     </v-card>
+
+    <v-sheet color="surface-container" rounded="lg" class="mb-4 pa-4">
+      <div class="text-subtitle-1 mb-2">分发规则</div>
+      <v-row dense>
+        <v-col cols="12" sm="6">
+          <v-text-field v-model="localConfig['cf_per_worker_max']" type="number" variant="filled" hide-details :label="KEY_LABELS['cf_per_worker_max']" />
+        </v-col>
+        <v-col cols="12" sm="6">
+          <v-text-field v-model="localConfig['region_other_max']" type="number" variant="filled" hide-details :label="KEY_LABELS['region_other_max']" />
+        </v-col>
+      </v-row>
+      <v-divider class="my-3" />
+      <div class="d-flex align-center justify-space-between">
+        <div class="text-body-2">{{ KEY_LABELS['dist_allow_paid_selfsigned'] }}</div>
+        <v-switch :model-value="localConfig['dist_allow_paid_selfsigned']==='1'" @update:model-value="(v:any)=>setDistBool('dist_allow_paid_selfsigned', v)" color="primary" hide-details density="compact" class="flex-grow-0 ml-4" />
+      </div>
+      <v-divider class="my-3" />
+      <div class="d-flex align-center justify-space-between">
+        <div class="text-body-2">{{ KEY_LABELS['dist_selfsigned_fallback'] }}</div>
+        <v-select :items="FALLBACK_OPTS" v-model="localConfig['dist_selfsigned_fallback']" variant="filled" density="compact" hide-details class="flex-grow-0" style="max-width: 200px" />
+      </div>
+      <v-divider class="my-3" />
+      <div class="d-flex align-center justify-space-between">
+        <div>
+          <div class="text-body-2">{{ KEY_LABELS['dist_allow_plaintext'] }}</div>
+          <div class="text-caption text-medium-emphasis">不加密，可被窃听/篡改，默认关闭</div>
+        </div>
+        <v-switch :model-value="localConfig['dist_allow_plaintext']==='1'" @update:model-value="(v:any)=>setDistBool('dist_allow_plaintext', v)" color="error" hide-details density="compact" class="flex-grow-0 ml-4" />
+      </div>
+    </v-sheet>
 
     <v-card flat rounded="xl" :loading="loading">
       <v-card-text>
@@ -234,6 +297,20 @@ onMounted(loadConfig)
         </div>
       </v-card-text>
     </v-card>
+
+    <v-dialog v-model="showPlainWarn" max-width="480">
+      <v-card>
+        <v-card-title>启用明文代理？</v-card-title>
+        <v-card-text>
+          明文 HTTP / SOCKS 代理不加密：链路上的任何人都能窃听、篡改你的流量，也能冒充节点做中间人。开启后这些节点会进入订阅。除非你完全清楚风险，否则请保持关闭。
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showPlainWarn = false">取消</v-btn>
+          <v-btn color="error" variant="flat" @click="confirmPlaintext">我已知晓，仍要启用</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-snackbar :model-value="!!snack" :color="snackColor" :timeout="2000" location="bottom">
       {{ snack }}

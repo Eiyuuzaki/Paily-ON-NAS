@@ -22,8 +22,6 @@ func isSkipCert(e *cache.NodeCacheEntry) bool {
 	return e.Raw != "" && (strings.Contains(e.Raw, `"skip-cert-verify":true`) || strings.Contains(e.Raw, `"skip-cert-verify": true`))
 }
 
-// rankPick orders candidates for choosing which to keep: source priority first
-// (paid/highest before free), then score.
 func rankPick(xs []*cache.NodeCacheEntry) {
 	sort.SliceStable(xs, func(i, j int) bool {
 		if xs[i].SourcePriority != xs[j].SourcePriority {
@@ -36,8 +34,6 @@ func rankPick(xs []*cache.NodeCacheEntry) {
 	})
 }
 
-// rankDisplay orders nodes inside a region for output: score first (good
-// nodes first), source priority as tiebreak.
 func rankDisplay(xs []*cache.NodeCacheEntry) {
 	sort.SliceStable(xs, func(i, j int) bool {
 		if xs[i].Score != xs[j].Score {
@@ -78,22 +74,20 @@ func capPerEgressLimit(entries []*cache.NodeCacheEntry, limit int) []*cache.Node
 type regionBlock struct {
 	region string
 	picked []*cache.NodeCacheEntry
-	sum    float64 // sum of scores of picked nodes ≈ count × quality
+	sum    float64
 	avg    float64
 }
 
-// SelectRegionQuota keeps each region contiguous (so the list reads region by
-// region) but orders the regions themselves by aggregate quality: regions whose
-// picked nodes have the highest total score (many AND high-scoring) come first.
-// Inside a region nodes are ordered by score (best first).
-//
-// Per region: CF capped per Worker (cfPerWorker), plus up to otherMax secure
-// non-CF; when secure non-CF is short, self-signed tops up to otherMax. Plaintext
-// is never used; blank/UN regions are dropped so every entry has a flag.
-func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax int) []SelectedNode {
+// SelectRegionQuota: region-contiguous output, regions ordered by aggregate
+// quality (sum of picked scores). Per region: CF capped per Worker
+// (cfPerWorker), plus up to otherMax secure non-CF; self-signed tops up per
+// selfSignedFallback ("short"=fill to otherMax, "empty"=only when region empty,
+// "none"=never). Plaintext is dropped unless allowPlaintext. Paid/highest
+// self-signed counts as secure when allowPaidSelfSigned.
+func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax int, allowPaidSelfSigned, allowPlaintext bool, selfSignedFallback string) []SelectedNode {
 	byRegion := make(map[string][]*cache.NodeCacheEntry, 32)
 	for _, e := range candidates {
-		if isPlaintext(e) {
+		if isPlaintext(e) && !allowPlaintext {
 			continue
 		}
 		if e.Region == "" || e.Region == "UN" {
@@ -109,7 +103,7 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			switch {
 			case isCFNode(e.Raw):
 				cf = append(cf, e)
-			case isSkipCert(e) && e.SourcePriority < 1:
+			case isSkipCert(e) && !(e.SourcePriority >= 1 && allowPaidSelfSigned):
 				skipOther = append(skipOther, e)
 			default:
 				secureOther = append(secureOther, e)
@@ -121,16 +115,25 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			secureOther = secureOther[:otherMax]
 		}
 		picked := append(append([]*cache.NodeCacheEntry{}, cf...), secureOther...)
-		if otherMax > 0 {
-			short := otherMax - len(secureOther)
-			if short > 0 && len(skipOther) > 0 {
-				rankPick(skipOther)
-				n := short
-				if len(skipOther) < n {
-					n = len(skipOther)
-				}
-				picked = append(picked, skipOther[:n]...)
+
+		topup := 0
+		switch selfSignedFallback {
+		case "short":
+			topup = otherMax - len(secureOther)
+		case "empty":
+			if len(picked) == 0 {
+				topup = otherMax
 			}
+		default: // "none" / unknown
+			topup = 0
+		}
+		if topup > 0 && len(skipOther) > 0 {
+			rankPick(skipOther)
+			n := topup
+			if len(skipOther) < n {
+				n = len(skipOther)
+			}
+			picked = append(picked, skipOther[:n]...)
 		}
 		if len(picked) == 0 {
 			continue

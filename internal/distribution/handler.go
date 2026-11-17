@@ -136,7 +136,12 @@ func (h *Handler) Distribute(
 	// probe against the same daily request budget, so shipping hundreds of
 	// them burns the quota without adding redundancy users can perceive.
 	SetPerEgressCap(configInt(h.db, "distribute_per_egress_max", DefaultPerEgressMax))
-	selected := SelectRegionQuota(candidates, configInt(h.db, "cf_per_worker_max", 4), configInt(h.db, "region_other_max", 8))
+	cfPerWorker := configInt(h.db, "cf_per_worker_max", 4)
+	otherMax := configInt(h.db, "region_other_max", 16)
+	allowPaid := configInt(h.db, "dist_allow_paid_selfsigned", 1) != 0
+	allowPlain := configInt(h.db, "dist_allow_plaintext", 0) != 0
+	fallback := configString(h.db, "dist_selfsigned_fallback", "short")
+	selected := SelectRegionQuota(candidates, cfPerWorker, otherMax, allowPaid, allowPlain, fallback)
 	log.Debug().Int("max", maxDistribute).Int("selected", len(selected)).Msg("distribution: region-quota selection")
 
 	log.Debug().

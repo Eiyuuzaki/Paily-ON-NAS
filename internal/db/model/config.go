@@ -63,4 +63,10 @@ var DefaultConfigs = map[string]string{
 	// Ingress: brand-new nodes a priority-0 source may introduce per round.
 	// Higher-priority sources are exempt. 0 disables.
 	"ingress_max_new_per_source": "40",
+	// ── Distribution rules (editable in the UI) ─────────────────────────
+	"cf_per_worker_max":          "4",
+	"region_other_max":          "16",
+	"dist_allow_paid_selfsigned": "1",
+	"dist_allow_plaintext":       "0",
+	"dist_selfsigned_fallback":   "short",
 }
