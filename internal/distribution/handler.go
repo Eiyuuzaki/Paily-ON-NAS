@@ -54,6 +54,7 @@ func (h *Handler) Distribute(
 		tag = *params.Tag
 	}
 	all := h.cache.ForTag(tag)
+	requireIPv4 := configInt(h.db, "dist_require_ipv4", 0) != 0
 
 	// Unlock filter + mode.
 	var requestedUnlocks []string
@@ -108,9 +109,11 @@ func (h *Handler) Distribute(
 		if hc, ok := timeHealth[e.ID]; ok && hc.Total >= minHourlySamples && hc.Rate < minHourlyAliveRate {
 			continue
 		}
-		// Endpoints with no A record cannot be reached by a v4-capable client at
-		// all: a tap on such a node times out immediately (2026-11-17, SG trojan).
-		if !reachableByFamily(c.Request.Context(), e.Server) {
+		// Optional: drop endpoints that publish no A record. Off by default because
+		// the line's IPv6 does reach them (measured 70-77ms from the NAS on the
+		// v6-only Singapore trojan), so removing them wastes good capacity for any
+		// client whose IPv6 works. Turn it on for v4-only audiences.
+		if requireIPv4 && !reachableByFamily(c.Request.Context(), e.Server) {
 			continue
 		}
 		// Unencrypted / self-signed policy is applied inside SelectRegionQuota so

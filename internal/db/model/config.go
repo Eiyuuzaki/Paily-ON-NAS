@@ -85,5 +85,7 @@ var DefaultConfigs = map[string]string{
 	"region_other_max":          "16",
 	"dist_allow_paid_selfsigned": "1",
 	"dist_allow_plaintext":       "0",
+	// 1 = only ship endpoints that publish an A record (v4-only audiences).
+	"dist_require_ipv4": "0",
 	"dist_selfsigned_fallback":   "short",
 }
