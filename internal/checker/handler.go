@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/middleware"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
 	"github.com/gin-gonic/gin"
@@ -266,6 +268,13 @@ func (h *Handler) PostResults(c *gin.Context) {
 		// evidence. This self-heals missing regions every cycle.
 		enrichRegionFromEgress(ctx, collectEgressIPs(results), regionUpdates, regionSources)
 		enrichRegionGeoIP(ctx, h.db, nodeIDs, regionUpdates, regionSources)
+		// A Cloudflare Worker runs at the edge that accepted the connection and its
+		// outbound sockets leave from that same edge, so the exit location IS the
+		// entry colo. GeoIP of the egress socket is useless here: Cloudflare's
+		// 104.28.x pool is reported as "US" by every database regardless of which
+		// colo it actually belongs to, which is what made labels contradict the
+		// measured path. Measured entry colo wins for CF nodes.
+		h.overrideCFRegionFromEntryColo(ctx, nodeIDs, regionUpdates, regionSources)
 
 		// Apply region updates outside the transaction (best-effort).
 		h.applyRegionUpdates(ctx, regionUpdates, regionSources)
@@ -436,6 +445,40 @@ func groupRegionObservations(probes []regionProbeRow, regions, sources map[uuid.
 // are measured per round, and without propagation the other siblings keep a
 // stale region for days (2026-11-15: subscription showed US for nodes whose
 // daytime exit was HK, because their last probe was a night round).
+// overrideCFRegionFromEntryColo replaces the region of self-built Cloudflare
+// nodes with the country of the edge colo their entry IP actually lands on.
+func (h *Handler) overrideCFRegionFromEntryColo(ctx context.Context, ids []uuid.UUID, regionUpdates, regionSources map[uuid.UUID]string) {
+	if len(ids) == 0 {
+		return
+	}
+	type row struct {
+		ID     uuid.UUID
+		Name   string
+		Colo   string
+	}
+	var rows []row
+	if err := h.db.WithContext(ctx).Raw(`
+SELECT n.id,
+       coalesce(n.raw::jsonb->>'name','') AS name,
+       coalesce(e.colo,'') AS colo
+FROM nodes n
+LEFT JOIN entry_ips e ON e.ip = n.server
+WHERE n.id IN ?`, ids).Scan(&rows).Error; err != nil {
+		return
+	}
+	for _, r := range rows {
+		if !strings.HasPrefix(r.Name, "CF-") || r.Colo == "" {
+			continue
+		}
+		region := entryip.RegionForColo(r.Colo)
+		if region == "" {
+			continue
+		}
+		regionUpdates[r.ID] = region
+		regionSources[r.ID] = "entry_colo"
+	}
+}
+
 func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid.UUID]string, regionSources map[uuid.UUID]string) {
 	if len(regionUpdates) == 0 {
 		return
