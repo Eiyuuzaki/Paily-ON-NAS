@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 
@@ -17,6 +18,18 @@ import (
 
 //go:embed flags.json
 var flagsJSON []byte
+
+//go:embed cfcolo.txt
+var cfColoData []byte
+
+// cfColo maps a measured CF /24 to the edge colo it lands on from our line.
+// CF anycast entry IPs do not sit in the country their address is registered
+// to, so a name prefix like "CF-US" records where the IP was sourced, not
+// where traffic enters. Measured colo overrides the prefix.
+var cfColo []struct {
+	Net  *net.IPNet
+	Colo string
+}
 
 type flagEntry struct {
 	Emoji string `json:"emoji"`
@@ -31,6 +44,22 @@ var (
 )
 
 func init() {
+	for _, line := range strings.Split(string(cfColoData), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(f[0]); err == nil {
+			cfColo = append(cfColo, struct {
+				Net  *net.IPNet
+				Colo string
+			}{n, strings.ToUpper(f[1])})
+		}
+	}
 	var raw map[string]flagEntry
 	if err := json.Unmarshal(flagsJSON, &raw); err != nil {
 		panic("naming: failed to parse flags.json: " + err.Error())
@@ -91,16 +120,56 @@ const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") +
 // (optional single-letter account segment, e.g. CF-C-SG-01).
 var cfNameRe = regexp.MustCompile(`"name":"CF-(?:[A-Z]-)?([A-Z]{2,3})-`)
 
-func entryRegionOf(raw string) string {
+// coloRegion maps a CF edge colo code to an ISO region code.
+var coloRegion = map[string]string{
+	"HKG": "HK", "NRT": "JP", "KIX": "JP", "ICN": "KR", "SIN": "SG",
+	"LAX": "US", "SJC": "US", "SEA": "US", "ORD": "US", "DFW": "US",
+	"IAD": "US", "EWR": "US", "ATL": "US", "MIA": "US",
+	"LHR": "GB", "FRA": "DE", "AMS": "NL", "CDG": "FR", "SYD": "AU",
+	"TPE": "TW", "BKK": "TH", "KUL": "MY", "SGN": "VN", "MNL": "PH",
+}
+
+// coloForIP returns the measured edge colo for an entry IP (matched by /24).
+func coloForIP(ip string) string {
+	a := net.ParseIP(strings.TrimSpace(ip))
+	if a == nil {
+		return ""
+	}
+	for _, e := range cfColo {
+		if e.Net.Contains(a) {
+			return e.Colo
+		}
+	}
+	return ""
+}
+
+// EntryRegionOf returns the region a CF node is actually entered from, or "".
+// server is the node's dialable server (IPv4); raw may carry an IPv6 entry, so
+// both are tried against the measured colo map.
+func EntryRegionOf(raw, server string) string { return entryRegionOf(raw, server) }
+
+func entryRegionOf(raw, server string) string {
+	// Only self-built CF nodes have a meaningful entry region; for everything
+	// else traffic enters exactly where it exits.
 	m := cfNameRe.FindStringSubmatch(raw)
 	if len(m) < 2 {
 		return ""
 	}
-	r := m[1]
-	if r == "HKG" {
-		r = "HK"
+	var obj map[string]any
+	if json.Unmarshal([]byte(raw), &obj) == nil {
+		if s, ok := obj["server"].(string); ok {
+			if r, ok := coloRegion[coloForIP(s)]; ok {
+				return r
+			}
+		}
 	}
-	return r
+	if r, ok := coloRegion[coloForIP(server)]; ok {
+		return r
+	}
+	if rr, ok := coloRegion[m[1]]; ok {
+		return rr
+	}
+	return m[1]
 }
 
 // gradeFromScore maps a numeric score to a letter grade using thresholds from
@@ -167,7 +236,7 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 	if region == "" {
 		region = "UN"
 	}
-	entryRegion := entryRegionOf(entry.Raw)
+	entryRegion := entryRegionOf(entry.Raw, entry.Server)
 	if entryRegion == "" {
 		entryRegion = region
 	}
