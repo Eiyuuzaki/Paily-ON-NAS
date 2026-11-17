@@ -39,6 +39,10 @@ type Node struct {
 	// failure cost). Grade is the band cut from it, in milliseconds.
 	EffLatencyMs int    `gorm:"not null;default:0"`
 	Grade        string `gorm:"size:2;not null;default:''"`
+	// LastDirectCheckAt is the timestamp of this node's own most recent DIRECT
+	// measurement. Inferred or borrowed data must never advance it: freshness has
+	// to describe what was actually observed on this node.
+	LastDirectCheckAt *time.Time `gorm:"index"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	// ArchivedAt marks a node retired from probing. The row is kept so the
@@ -76,5 +80,9 @@ type NodeDeepCheck struct {
 	SpeedKbps       int       `gorm:"not null;default:0"`    // 0 = not measured
 	StreamingResult string    `gorm:"not null;default:'{}'"` // JSON {"netflix":true,...}
 	Metadata        string    `gorm:"not null;default:'{}'"` // JSON extra fields
-	CheckedAt       time.Time `gorm:"not null"`
+	// Source records how this row came to exist. DIRECT = the checker measured
+	// this node in this run. Future INFERRED rows would be derived from a sibling
+	// on the same entry, and must never feed score/grade or refresh freshness.
+	Source    string    `gorm:"size:16;not null;default:'direct'"`
+	CheckedAt time.Time `gorm:"not null"`
 }

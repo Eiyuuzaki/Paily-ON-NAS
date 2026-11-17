@@ -81,11 +81,10 @@ func (s *Service) ComputeAndUpdateScore(ctx context.Context, nodeID uuid.UUID) e
 	return s.ComputeAndUpdateTagScore(ctx, nodeID, "default")
 }
 
-// siblingRecords returns recent deep checks from nodes that share this node's
-// entry (server) and SNI. Used when representative probing skipped this node:
-// the same entry + same Worker means the same path, so a sibling's fresh
-// measurement is better evidence than this node's own stale history.
-func (s *Service) siblingRecords(ctx context.Context, nodeID uuid.UUID, checkerTag string, since time.Time) []model.NodeDeepCheck {
+// deprecatedSiblingRecords is retained only as documentation of a rejected
+// design: borrowing a sibling's measurement makes an unmeasured node look fresh.
+// It is not called anywhere.
+func (s *Service) deprecatedSiblingRecords(ctx context.Context, nodeID uuid.UUID, checkerTag string, since time.Time) []model.NodeDeepCheck {
 	var peers []struct {
 		Server string
 		SNI    string
@@ -152,27 +151,30 @@ func (s *Service) ComputeAndUpdateTagScore(ctx context.Context, nodeID uuid.UUID
 	var records []model.NodeDeepCheck
 	load := func(since time.Time) error {
 		records = nil
-		q := s.db.WithContext(ctx).Where("node_id = ? AND checker_tag = ?", nodeID, checkerTag)
+		// Only DIRECT measurements describe this node. Borrowed/inferred rows are
+		// deliberately excluded from score, grade and EWMA.
+		q := s.db.WithContext(ctx).Where("node_id = ? AND checker_tag = ? AND source = ?", nodeID, checkerTag, "direct")
 		if !since.IsZero() {
 			q = q.Where("checked_at >= ?", since)
 		}
-		return q.Order("checked_at DESC").Limit(20).Find(&records).Error
+		if err := q.Order("checked_at DESC").Limit(20).Find(&records).Error; err != nil {
+			return err
+		}
+		// Defence in depth: the query already filters on source, and this guard keeps
+		// a future caller from slipping borrowed rows past the scorer.
+		records = filterDirect(records)
+		return nil
 	}
 	if err := load(params.historySince); err != nil {
 		return err
 	}
 
-	// Representative probing measures only a couple of nodes per entry, so most
-	// siblings of a group are never probed in a given cycle and would keep a score
-	// from whenever they were last picked. Before falling back to this node's own
-	// stale history, borrow fresh evidence from a sibling that shares the same
-	// entry and SNI: they take the same network path, so the measurement transfers.
-	if len(records) == 0 {
-		if sib := s.siblingRecords(ctx, nodeID, checkerTag, params.historySince); len(sib) > 0 {
-			records = sib
-		}
-	}
-
+	// NOTE: an earlier revision borrowed fresh records from a sibling node on the
+	// same entry+SNI when this node had none. That silently manufactured freshness:
+	// ~47% of the pool's grades came from siblings while looking freshly measured.
+	// Inference is no longer allowed to feed score/grade. When this node has no
+	// DIRECT records after the cutoff we fall back to its own older series below,
+	// and its staleness is visible through nodes.last_direct_check_at.
 	if len(records) == 0 && !params.historySince.IsZero() {
 		// Last resort: this node's own older series. Keeps a meaningful score (and
 		// its grade) rather than zeroing a node only because it was not re-checked.
