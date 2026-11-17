@@ -1,25 +1,49 @@
 package distribution
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
+	"github.com/rs/zerolog/log"
 )
 
-func isCFNode(raw string) bool { return strings.Contains(raw, `"name":"CF-`) }
+// rawProxy is the subset of a Clash proxy config these helpers care about.
+// Matching is done on the decoded values, never on the raw text: rewriting the
+// JSON through jsonb (which the entry swap does) re-serialises it with spaces,
+// and a substring test for `"name":"CF-` silently stopped recognising every
+// self-built node, which let them bypass the per-Worker cap and starve other
+// sources out of the region quotas (2026-11-17).
+type rawProxy struct {
+	Name          string `json:"name"`
+	TLS           bool   `json:"tls"`
+	SkipCertVerify bool   `json:"skip-cert-verify"`
+}
+
+func parseRaw(raw string) rawProxy {
+	var p rawProxy
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &p)
+	}
+	return p
+}
+
+func isCFNode(raw string) bool {
+	return strings.HasPrefix(parseRaw(raw).Name, "CF-")
+}
 
 func isPlaintext(e *cache.NodeCacheEntry) bool {
 	p := e.Protocol
 	if p != "http" && p != "socks" && p != "socks5" {
 		return false
 	}
-	return !strings.Contains(e.Raw, `"tls":true`)
+	return !parseRaw(e.Raw).TLS
 }
 
 func isSkipCert(e *cache.NodeCacheEntry) bool {
-	return e.Raw != "" && (strings.Contains(e.Raw, `"skip-cert-verify":true`) || strings.Contains(e.Raw, `"skip-cert-verify": true`))
+	return e.Raw != "" && parseRaw(e.Raw).SkipCertVerify
 }
 
 func rankPick(xs []*cache.NodeCacheEntry) {
@@ -108,6 +132,22 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			default:
 				secureOther = append(secureOther, e)
 			}
+		}
+		if r == "US" {
+			ids := map[string]int{}
+			for _, e := range cf {
+				ids[egressIdentity(e)]++
+			}
+			rankPick(secureOther)
+			top := make([]string, 0, 5)
+			for i, e := range secureOther {
+				if i >= 5 {
+					break
+				}
+				top = append(top, fmt.Sprintf("%s|p%d|%.2f|%s", parseRaw(e.Raw).Name, e.SourcePriority, e.Score, e.Server))
+			}
+			log.Warn().Int("cf", len(cf)).Int("other", len(secureOther)).Int("skip", len(skipOther)).
+				Interface("identities", ids).Strs("top_other", top).Msg("dbg: US buckets")
 		}
 		cf = capPerEgressLimit(cf, cfPerWorker)
 		rankPick(secureOther)

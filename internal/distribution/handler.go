@@ -101,10 +101,12 @@ func (h *Handler) Distribute(
 		}
 		// Time-of-day filter: nodes with poor survival at this hour drop out.
 		// No row in node_time_health = no data = keep (never punish new nodes).
-		if len(timeHealth) > 0 {
-			if rate, ok := timeHealth[e.ID]; ok && rate < minHourlyAliveRate {
-				continue
-			}
+		// Only trust the hourly rate once there are enough samples: with a 2h probe
+		// cadence an hour often holds 1-3 observations, so one hiccup reads as
+		// "33% alive" and silently evicts a healthy node (2026-11-17: the
+		// HidenCloud self-built exit vanished from every subscription this way).
+		if hc, ok := timeHealth[e.ID]; ok && hc.Total >= minHourlySamples && hc.Rate < minHourlyAliveRate {
+			continue
 		}
 		// Unencrypted / self-signed policy is applied inside SelectRegionQuota so
 		// that a region with no secure node can still fall back to self-signed.
@@ -506,8 +508,17 @@ func contentTypeFor(formatName string) string {
 // node to stay in the pool; nodes without any time-health rows are exempt.
 const minHourlyAliveRate = 0.5
 
+// minHourlySamples is how many observations an hour needs before its survival
+// rate may filter a node out.
+const minHourlySamples = 4
+
+type hourlyHealth struct {
+	Rate  float64
+	Total int
+}
+
 // loadTimeHealth returns nodeID → alive rate for the current UTC hour.
-func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]float64 {
+func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]hourlyHealth {
 	hour := time.Now().UTC().Hour()
 	var rows []struct {
 		NodeID    uuid.UUID
@@ -522,12 +533,12 @@ func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]float64 {
 	if len(rows) == 0 {
 		return nil
 	}
-	m := make(map[uuid.UUID]float64, len(rows))
+	m := make(map[uuid.UUID]hourlyHealth, len(rows))
 	for _, r := range rows {
 		if r.TotalCount <= 0 {
 			continue
 		}
-		m[r.NodeID] = float64(r.AliveCount) / float64(r.TotalCount)
+		m[r.NodeID] = hourlyHealth{Rate: float64(r.AliveCount) / float64(r.TotalCount), Total: r.TotalCount}
 	}
 	return m
 }
