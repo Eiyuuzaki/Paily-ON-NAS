@@ -122,5 +122,18 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			out = append(out, SelectedNode{Entry: e, SeqNo: i + 1, SeqID: fmt.Sprintf("%s%02d", lower, i+1)})
 		}
 	}
+	// Best first: order by source priority then score so the highest-quality
+	// nodes appear at the top regardless of region. SeqNo (naming) is per-region
+	// and unaffected by this display ordering.
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].Entry, out[j].Entry
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.SourcePriority != b.SourcePriority {
+			return a.SourcePriority > b.SourcePriority
+		}
+		return a.Server < b.Server
+	})
 	return out
 }
