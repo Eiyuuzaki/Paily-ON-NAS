@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
@@ -72,6 +73,8 @@ type nodeFields struct {
 	Streaming     map[string]bool `expr:"streaming"`
 	Sponsor       string          `expr:"sponsor"`
 	SourcePriority int           `expr:"source_priority"` // 0=公益, 1=机场/付费, 2=最高
+	EntryRegion   string          `expr:"entry_region"`    // 入口地区（CF 名字前缀推断，非CF=出口）
+	EntryFlag     string          `expr:"entry_flag"`
 }
 
 // namingEnv is the top-level context for the node naming expression.
@@ -82,7 +85,23 @@ type namingEnv struct {
 }
 
 // defaultTemplate is used when no node_name_template config entry exists.
-const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " - " + node.region_flag + node.region + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
+const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
+
+// cfNameRe extracts the region from a self-built CF node name like CF-HKG-245
+// (optional single-letter account segment, e.g. CF-C-SG-01).
+var cfNameRe = regexp.MustCompile(`"name":"CF-(?:[A-Z]-)?([A-Z]{2,3})-`)
+
+func entryRegionOf(raw string) string {
+	m := cfNameRe.FindStringSubmatch(raw)
+	if len(m) < 2 {
+		return ""
+	}
+	r := m[1]
+	if r == "HKG" {
+		r = "HK"
+	}
+	return r
+}
 
 // gradeFromScore maps a numeric score to a letter grade using thresholds from
 // the configs table. Defaults: A≥0.75, B≥0.50, C≥0.25, else D.
@@ -148,6 +167,10 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 	if region == "" {
 		region = "UN"
 	}
+	entryRegion := entryRegionOf(entry.Raw)
+	if entryRegion == "" {
+		entryRegion = region
+	}
 
 	// For non-common presets use the full country name instead of the ISO code.
 	regionDisplay := region
@@ -168,6 +191,8 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 			Streaming:      entry.StreamingResult,
 			Sponsor:        entry.SponsorText,
 			SourcePriority: entry.SourcePriority,
+			EntryRegion:    entryRegion,
+			EntryFlag:      flagFor(entryRegion),
 		},
 		UnlockFlags: unlockFlags,
 		FilterMode:  filterMode,

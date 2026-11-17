@@ -39,7 +39,7 @@ var DefaultConfigs = map[string]string{
 	"cleanup_interval_minutes":         "30",
 	"default_sponsor_text":             "",
 	"node_distribute_filter":           "",
-	"node_name_template":               `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " - " + node.region_flag + " " + node.region + " " + node.seq + (node.sponsor != "" ? " " + node.sponsor : "")`,
+	"node_name_template":               `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`,
 	"filename_clash":                   "Paily Connect.yaml",
 	"filename_singbox":                 "Paily Connect.json",
 	"filename_base64":                  "Paily Connect.txt",
