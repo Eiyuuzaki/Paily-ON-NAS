@@ -108,6 +108,11 @@ func (h *Handler) Distribute(
 		if hc, ok := timeHealth[e.ID]; ok && hc.Total >= minHourlySamples && hc.Rate < minHourlyAliveRate {
 			continue
 		}
+		// Endpoints with no A record cannot be reached by a v4-capable client at
+		// all: a tap on such a node times out immediately (2026-11-17, SG trojan).
+		if !reachableByFamily(c.Request.Context(), e.Server) {
+			continue
+		}
 		// Unencrypted / self-signed policy is applied inside SelectRegionQuota so
 		// that a region with no secure node can still fall back to self-signed.
 		candidates = append(candidates, e)
