@@ -129,23 +129,44 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	}
 
 	var nodes []model.Node
-	// hashtext bucketing and window functions are PostgreSQL-specific; this
-	// deployment targets PostgreSQL only (see README: static builds ship
-	// without sqlite).
+	// Representative probing with coverage-aware rotation (2026-11-17).
 	//
-	// Placeholder order matches the CTE-first text: repMinGroup, repPerServer
-	// bind inside the reps CTE; proofRounds, deadGraceMin, sweepSlots, sweepSlots
-	// bind in the dead-side branch.
+	// The previous hashtext(id || 2h-bucket) rotation had two defects, both
+	// measured tonight: a 44-node entry covered only 7 of its nodes in 8 hours
+	// (16%), and a handful of nodes were probed in >=10 of the 12 daily rounds
+	// while 93 were never probed at all. Rotation by hash is blind to how long a
+	// node has actually gone without a measurement.
+	//
+	// New order inside each entry: nodes whose own last DIRECT measurement is
+	// oldest go first (never-measured count as infinitely old), then round-robin
+	// by round bucket so different representatives are picked each round. A
+	// 10%-of-round random exploration slice is added on top for entries whose
+	// full roster is not otherwise covered, so long-tail nodes still get
+	// independent measurements instead of waiting forever.
+	//
+	// hashtext bucketing and window functions are PostgreSQL-specific; this
+	// deployment targets PostgreSQL only.
+	//
+	// Placeholder order: repMinGroup, repPerServer, exploreSlots bind inside the
+	// reps CTE; proofRounds, deadGraceMin, sweepSlots, sweepSlots bind in the
+	// dead-side branch.
+	exploreSlots := readConfigInt(h.db, "check_explore_slots", 6)
+	if exploreSlots < 0 {
+		exploreSlots = 0
+	}
 	if err := h.db.WithContext(c.Request.Context()).Raw(`
 		WITH ranked AS (
 		    SELECT id, server,
 		           row_number() OVER (PARTITION BY server
-		               ORDER BY hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rn,
+		               ORDER BY last_direct_check_at NULLS FIRST,
+		                        hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rn,
 		           count(*) OVER (PARTITION BY server) AS total
 		    FROM nodes
 		    WHERE archived_at IS NULL AND alive = true
 		), reps AS (
 		    SELECT id FROM ranked WHERE total <= ? OR rn <= ?
+		    UNION
+		    SELECT id FROM ranked WHERE rn <= ? * 5
 		    UNION
 		    SELECT id FROM (
 		        SELECT id,
@@ -166,7 +187,7 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		            OR mod(abs(hashtext(n.id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
 		       ))
 		       OR (n.alive = true AND n.id IN (SELECT id FROM reps))
-		  )`, repMinGroup, repPerServer, proofRounds, deadGraceMin, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
+		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, deadGraceMin, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -261,6 +282,22 @@ func (h *Handler) PostResults(c *gin.Context) {
 			log.Error().Err(err).Str("tag", tag).Str("run_id", checkRunID.String()).
 				Msg("checker: transaction failed")
 			return
+		}
+
+		// Freshness describes what this node itself was observed doing, so only
+		// DIRECT rows may advance it. A borrowed or inferred value must never make
+		// an unmeasured node look freshly measured.
+		if len(deepChecks) > 0 {
+			if err := h.db.WithContext(ctx).Exec(`
+UPDATE nodes n SET last_direct_check_at = d.last
+FROM (SELECT node_id, max(checked_at) AS last
+      FROM node_deep_checks
+      WHERE check_run_id = ? AND source = 'direct'
+      GROUP BY node_id) d
+WHERE n.id = d.node_id
+  AND (n.last_direct_check_at IS NULL OR n.last_direct_check_at < d.last)`, checkRunID).Error; err != nil {
+				log.Warn().Err(err).Msg("checker: last_direct_check_at update failed")
+			}
 		}
 
 		// Region enrichment: prefer the measured EGRESS IP (accurate exit
@@ -392,6 +429,7 @@ func (h *Handler) buildCheckRecords(
 				NodeID:          nodeID,
 				CheckRunID:      checkRunID,
 				CheckerTag:      tag,
+				Source:          "direct", // written only for nodes the checker actually measured
 				AvgLatencyMs:    d.AvgLatencyMs,
 				JitterMs:        d.JitterMs,
 				SpeedKbps:       speedKbps,
