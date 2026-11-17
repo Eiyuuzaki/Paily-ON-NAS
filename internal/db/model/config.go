@@ -35,9 +35,12 @@ var DefaultConfigs = map[string]string{
 	// measurement path changes (e.g. from a connection per sample to keep-alive).
 	"score_max_latency_ms": "1500",
 	"score_max_jitter_ms":  "400",
-	"grade_a_min":                      "0.75",
-	"grade_b_min":                      "0.50",
-	"grade_c_min":                      "0.25",
+	// Grade bands. Tuned 2026-11-17 against 844 live CF nodes after the probing
+	// fix flattened the pool: S top ~0.5%, A ~2.7%, B ~32%, C ~56%.
+	"grade_s_min":                      "0.85",
+	"grade_a_min":                      "0.78",
+	"grade_b_min":                      "0.60",
+	"grade_c_min":                      "0.35",
 	"node_alive_check_window_minutes":  "240",
 	"check_run_history_days":           "7",
 	"cleanup_interval_minutes":         "30",

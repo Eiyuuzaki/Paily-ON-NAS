@@ -241,9 +241,17 @@ func entryRegionOf(raw, server string) string {
 }
 
 // gradeFromScore maps a numeric score to a letter grade using thresholds from
-// the configs table. Defaults: A≥0.75, B≥0.50, C≥0.25, else D.
-func gradeFromScore(score float64, gradeA, gradeB, gradeC float64) string {
+// the configs table.
+//
+// S exists because the A band had become meaningless: after the probing fix the
+// CF pool clustered around 0.71-0.78, so the old A≥0.75 boundary ran straight
+// through the middle of the mass and a 20ms wobble flipped a node between A and
+// B. Defaults (calibrated on 844 live CF nodes): S≥0.85 (top ~0.5%), A≥0.78
+// (~2.7%), B≥0.60 (~32%), C≥0.35 (~56%), else D.
+func gradeFromScore(score float64, gradeS, gradeA, gradeB, gradeC float64) string {
 	switch {
+	case score >= gradeS:
+		return "S"
 	case score >= gradeA:
 		return "A"
 	case score >= gradeB:
@@ -297,9 +305,10 @@ func configFloat(db *gorm.DB, key string, def float64) float64 {
 //   - db: used to read grade thresholds and the name template from the config table
 func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockFlags, filterMode, preset string, db *gorm.DB) string {
 	refreshEntryColo(db)
-	gradeA := configFloat(db, "grade_a_min", 0.75)
-	gradeB := configFloat(db, "grade_b_min", 0.50)
-	gradeC := configFloat(db, "grade_c_min", 0.25)
+	gradeS := configFloat(db, "grade_s_min", 0.85)
+	gradeA := configFloat(db, "grade_a_min", 0.78)
+	gradeB := configFloat(db, "grade_b_min", 0.60)
+	gradeC := configFloat(db, "grade_c_min", 0.35)
 
 	region := strings.ToUpper(entry.Region)
 	if region == "" {
@@ -320,7 +329,7 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 		Node: nodeFields{
 			Region:         regionDisplay,
 			RegionFlag:     flagFor(region),
-			Grade:          gradeFromScore(entry.Score, gradeA, gradeB, gradeC),
+			Grade:          gradeFromScore(entry.Score, gradeS, gradeA, gradeB, gradeC),
 			Score:          entry.Score,
 			Seq:            seqID(region, seqNo),
 			Server:         entry.Server,
