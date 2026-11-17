@@ -278,6 +278,11 @@ func (h *Handler) PostResults(c *gin.Context) {
 
 		// Apply region updates outside the transaction (best-effort).
 		h.applyRegionUpdates(ctx, regionUpdates, regionSources)
+		// A node that merely reaches chatgpt.com from an unsupported country cannot
+		// actually be used for it: OpenAI serves the landing page and refuses the
+		// account/session from there. Hong Kong is one of those regions, and it is
+		// where most of the self-built pool exits.
+		h.gateAICapabilities(ctx)
 
 		// ── Phase 2: batch alive decision ─────────────────────────────────
 		windowMinutes := h.readConfigInt(ctx, "node_alive_check_window_minutes", 240)
@@ -476,6 +481,23 @@ WHERE n.id IN ?`, ids).Scan(&rows).Error; err != nil {
 		}
 		regionUpdates[r.ID] = region
 		regionSources[r.ID] = "entry_colo"
+	}
+}
+
+// unsupportedAIRegions are countries OpenAI does not serve. Reaching chatgpt.com
+// from one of them is not "access", so the capability flag is cleared.
+var unsupportedAIRegions = []string{"CN", "HK", "MO", "RU", "IR", "KP", "CU", "SY"}
+
+// gateAICapabilities clears access-chatgpt for nodes whose measured exit region
+// is not served by OpenAI. Runs after region updates so it sees the final value.
+func (h *Handler) gateAICapabilities(ctx context.Context) {
+	if err := h.db.WithContext(ctx).Exec(`
+UPDATE node_deep_checks d
+SET streaming_result = (d.streaming_result::jsonb || '{"access-chatgpt": false}'::jsonb)::text
+WHERE d.checked_at > now() - interval '3 days'
+  AND d.streaming_result::jsonb->>'access-chatgpt' = 'true'
+  AND d.node_id IN (SELECT id FROM nodes WHERE region = ANY(?))`, unsupportedAIRegions).Error; err != nil {
+		log.Warn().Err(err).Msg("checker: ai capability gate failed")
 	}
 }
 
