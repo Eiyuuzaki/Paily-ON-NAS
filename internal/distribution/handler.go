@@ -148,6 +148,39 @@ func (h *Handler) Distribute(
 	SetPerEgressCap(configInt(h.db, "distribute_per_egress_max", DefaultPerEgressMax))
 	cfPerWorker := configInt(h.db, "cf_per_worker_max", 4)
 	otherMax := configInt(h.db, "region_other_max", 16)
+
+	// Worker circuit breaker (2026-11-18): CF nodes inherit the breaker state of
+	// their Worker SNI (see internal/workerhealth). An aggregate Worker failure is
+	// invisible to per-node scores — every CF node slows together and relative
+	// ranking does not move — so the breaker must act here, at distribution time.
+	// Node scores are NOT touched: this is a distribution decision, and when the
+	// breaker returns to healthy the nodes come back with their original scores.
+	var workerStates []struct {
+		WorkerID string
+		State    string
+	}
+	if err := h.db.WithContext(c.Request.Context()).Raw(
+		`SELECT worker_id, state FROM worker_health WHERE state <> 'healthy'`).Scan(&workerStates).Error; err != nil {
+		log.Warn().Err(err).Msg("distribution: worker health query failed (treating as healthy)")
+	}
+	for _, w := range workerStates {
+		switch w.State {
+		case "open":
+			// Aggregate failure ongoing: CF nodes out of the subscription entirely.
+			filtered := candidates[:0]
+			for _, e := range candidates {
+				if !isCFNode(e.Raw) {
+					filtered = append(filtered, e)
+				}
+			}
+			candidates = filtered
+			cfPerWorker = 0
+		case "degraded", "half_open":
+			// Recovering or borderline: keep one CF representative per region so a
+			// future recovery is still visible in the subscription.
+			cfPerWorker = 1
+		}
+	}
 	allowPaid := configInt(h.db, "dist_allow_paid_selfsigned", 1) != 0
 	allowPlain := configInt(h.db, "dist_allow_plaintext", 0) != 0
 	fallback := configString(h.db, "dist_selfsigned_fallback", "short")

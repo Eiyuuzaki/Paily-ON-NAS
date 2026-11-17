@@ -15,6 +15,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/workerhealth"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
 	"github.com/gin-gonic/gin"
@@ -298,6 +299,13 @@ WHERE n.id = d.node_id
   AND (n.last_direct_check_at IS NULL OR n.last_direct_check_at < d.last)`, checkRunID).Error; err != nil {
 				log.Warn().Err(err).Msg("checker: last_direct_check_at update failed")
 			}
+		}
+
+		// Advance the Worker circuit breaker with this run's aggregates. Kept
+		// outside the insert transaction: breaker bookkeeping must not roll back
+		// measurement persistence, and its own failure must not fail the cycle.
+		if err := workerhealth.EvaluateRun(ctx, h.db, checkRunID.String()); err != nil {
+			log.Warn().Err(err).Msg("checker: worker health evaluation failed")
 		}
 
 		// Region enrichment: prefer the measured EGRESS IP (accurate exit
