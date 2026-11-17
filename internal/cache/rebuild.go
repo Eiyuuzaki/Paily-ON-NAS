@@ -3,6 +3,8 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
@@ -220,6 +222,16 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 		n := &nodes[i]
 		var rc map[string]any
 		if err := json.Unmarshal([]byte(n.Raw), &rc); err == nil {
+			// Emit the IPv4 entry when raw server is IPv6 but the node carries an
+			// IPv4 server: probes already dial IPv4, and clients cannot reach the
+			// v6 entry, so distributing it would time out in the client.
+			if rs, ok := rc["server"].(string); ok {
+				if ip := net.ParseIP(strings.TrimSpace(rs)); ip != nil && ip.To4() == nil {
+					if sip := net.ParseIP(strings.TrimSpace(n.Server)); sip != nil && sip.To4() != nil {
+						rc["server"] = n.Server
+					}
+				}
+			}
 			sharedRawConfig[n.ID] = rc
 			if pn, err := node.New(rc); err == nil {
 				sharedProxy[n.ID] = pn
