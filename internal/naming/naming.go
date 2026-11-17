@@ -9,6 +9,8 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
@@ -129,6 +131,60 @@ var coloRegion = map[string]string{
 	"TPE": "TW", "BKK": "TH", "KUL": "MY", "SGN": "VN", "MNL": "PH",
 }
 
+// Measured entry colo lives in the entry_ips table (filled by core's passive
+// refresh and by the periodic discovery scan). Read it through a small cache so
+// naming one subscription does not hit the database per node.
+var (
+	coloMu  sync.RWMutex
+	coloMap = map[string]string{}
+	coloExp time.Time
+)
+
+const coloTTL = 5 * time.Minute
+
+func refreshEntryColo(db *gorm.DB) {
+	coloMu.RLock()
+	fresh := time.Now().Before(coloExp) && db != nil
+	coloMu.RUnlock()
+	if fresh {
+		return
+	}
+	type row struct {
+		IP   string
+		Colo string
+	}
+	var rows []row
+	if err := db.Raw("SELECT ip, colo FROM entry_ips WHERE colo <> ''").Scan(&rows).Error; err != nil {
+		return
+	}
+	m := make(map[string]string, len(rows))
+	for _, r := range rows {
+		m[r.IP] = strings.ToUpper(r.Colo)
+	}
+	coloMu.Lock()
+	coloMap = m
+	coloExp = time.Now().Add(coloTTL)
+	coloMu.Unlock()
+}
+
+// entryColo returns the measured colo for an entry IP, if known.
+func entryColo(ip string) (string, bool) {
+	coloMu.RLock()
+	defer coloMu.RUnlock()
+	c, ok := coloMap[ip]
+	return c, ok
+}
+
+// ColoCandidates returns the /24 CIDRs known to have landed on a fast edge from
+// this line, for the discovery scan to re-verify.
+func ColoCandidates() []string {
+	out := make([]string, 0, len(cfColo))
+	for _, e := range cfColo {
+		out = append(out, e.Net.String())
+	}
+	return out
+}
+
 // coloForIP returns the measured edge colo for an entry IP (matched by /24).
 func coloForIP(ip string) string {
 	a := net.ParseIP(strings.TrimSpace(ip))
@@ -158,9 +214,21 @@ func entryRegionOf(raw, server string) string {
 	var obj map[string]any
 	if json.Unmarshal([]byte(raw), &obj) == nil {
 		if s, ok := obj["server"].(string); ok {
+			if c, ok := entryColo(s); ok {
+				if r, ok := coloRegion[c]; ok {
+					return r
+				}
+			}
+			// Fall back to the embedded scan snapshot; it goes stale (measured
+			// 2026-11-17: 4 of 12 entries had drifted), hence live data first.
 			if r, ok := coloRegion[coloForIP(s)]; ok {
 				return r
 			}
+		}
+	}
+	if c, ok := entryColo(server); ok {
+		if r, ok := coloRegion[c]; ok {
+			return r
 		}
 	}
 	if r, ok := coloRegion[coloForIP(server)]; ok {
@@ -228,6 +296,7 @@ func configFloat(db *gorm.DB, key string, def float64) float64 {
 //   - preset: distribution preset ("common"/"all"/"other"); non-common uses full region name
 //   - db: used to read grade thresholds and the name template from the config table
 func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockFlags, filterMode, preset string, db *gorm.DB) string {
+	refreshEntryColo(db)
 	gradeA := configFloat(db, "grade_a_min", 0.75)
 	gradeB := configFloat(db, "grade_b_min", 0.50)
 	gradeC := configFloat(db, "grade_c_min", 0.25)

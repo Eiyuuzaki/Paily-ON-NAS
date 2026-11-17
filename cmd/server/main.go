@@ -30,8 +30,10 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/fetcher"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/migrate"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/naming"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/scoring"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/source"
@@ -46,9 +48,20 @@ import (
 	_ "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/format/singbox"
 )
 
+// envIntOr reads an integer environment override, falling back to def.
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
 func main() {
 	cfgFile := flag.String("config", "", "path to config file (default: ./config.yaml)")
 	migrateFlag := flag.Bool("migrate", false, "migrate config tables from SQLite to PostgreSQL, then exit")
+	ipscanFlag := flag.Bool("ipscan", false, "probe candidate Cloudflare /24s for fast edge entries, then exit")
 	migrateFrom := flag.String("migrate-from", "", "path to source SQLite database file (required with -migrate)")
 	flag.Parse()
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr}).Level(zerolog.InfoLevel)
@@ -68,6 +81,41 @@ func main() {
 		if err := migrate.Run(*migrateFrom, cfg.Database.DSN); err != nil {
 			log.Fatal().Err(err).Msg("migration failed")
 		}
+		return
+	}
+
+	// ── Discovery mode ────────────────────────────────────────────────────────
+	// Re-verifies which Cloudflare /24s currently land on a fast edge. Meant to run
+	// on a weekly cron; a few hundred low-concurrency probes, nothing more.
+	if *ipscanFlag {
+		cfg, err := config.Load(*cfgFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load config")
+		}
+		database, err := db.Init(cfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to init database")
+		}
+		cands := naming.ColoCandidates()
+		// The entry addresses actually in use must always be re-measured: they are
+		// what every node dials, and CF routing moves them between colos.
+		var inUse []string
+		database.Raw(`SELECT DISTINCT server FROM nodes
+			WHERE archived_at IS NULL AND (raw::jsonb->>'name') LIKE 'CF-%'
+			  AND server NOT LIKE '%:%'`).Scan(&inUse)
+		limit := envIntOr("IPSCAN_LIMIT", 320)
+		conc := envIntOr("IPSCAN_CONCURRENCY", 16)
+		found, probed, err := entryip.Discover(context.Background(), database, entryip.ScanOptions{
+			Candidates:  cands,
+			Pinned:      inUse,
+			Limit:       limit,
+			Concurrency: conc,
+			MaxRTTMs:    envIntOr("IPSCAN_MAX_RTT_MS", 250),
+		})
+		if err != nil {
+			log.Fatal().Err(err).Msg("ipscan failed")
+		}
+		fmt.Printf("ipscan: probed=%d hkg=%d candidates=%d in_use=%d\n", probed, found, len(cands), len(inUse))
 		return
 	}
 
@@ -118,6 +166,22 @@ func main() {
 
 	// Trigger an initial cache rebuild so distribution is ready immediately on startup.
 	aliveCache.TriggerRebuild(context.Background())
+
+	// Refresh the per-entry-IP view from the deep checks that are already being
+	// produced. This costs one query and keeps entry labels/rankings current
+	// without any extra probing (2026-11-17).
+	go func() {
+		tick := time.NewTicker(10 * time.Minute)
+		defer tick.Stop()
+		for {
+			if n, err := entryip.RefreshPassive(context.Background(), database, 6*time.Hour); err != nil {
+				log.Warn().Err(err).Msg("entryip: passive refresh failed")
+			} else {
+				log.Debug().Int("entries", n).Msg("entryip: passive refresh")
+			}
+			<-tick.C
+		}
+	}()
 
 	// ── HTTP engine ──────────────────────────────────────────────────────────
 	gin.SetMode(gin.ReleaseMode)
