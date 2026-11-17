@@ -31,6 +31,10 @@ var DefaultConfigs = map[string]string{
 	"score_weight_speed":               "0.55",
 	"score_latency_curve_k":            "0.3",
 	"score_jitter_linear_threshold_ms": "200",
+	// Latency/jitter normalisation anchors. Rescale these whenever the checker's
+	// measurement path changes (e.g. from a connection per sample to keep-alive).
+	"score_max_latency_ms": "1500",
+	"score_max_jitter_ms":  "400",
 	"grade_a_min":                      "0.75",
 	"grade_b_min":                      "0.50",
 	"grade_c_min":                      "0.25",
