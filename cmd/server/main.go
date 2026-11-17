@@ -183,6 +183,17 @@ func main() {
 		}
 	}()
 
+	// Repair nodes left unscored by a scoring/config change: a node with history
+	// but score 0 is unranked and sinks to the bottom of every subscription.
+	go func() {
+		time.Sleep(5 * time.Second)
+		if n, err := scoringSvc.RecomputeZeroScores(context.Background()); err != nil {
+			log.Warn().Err(err).Msg("scoring: zero-score repair failed")
+		} else {
+			log.Info().Int("nodes", n).Msg("scoring: repaired zero scores")
+		}
+	}()
+
 	// ── HTTP engine ──────────────────────────────────────────────────────────
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()

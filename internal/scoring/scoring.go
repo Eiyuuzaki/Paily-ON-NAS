@@ -75,6 +75,66 @@ func (s *Service) ComputeAndUpdateScore(ctx context.Context, nodeID uuid.UUID) e
 	return s.ComputeAndUpdateTagScore(ctx, nodeID, "default")
 }
 
+// siblingRecords returns recent deep checks from nodes that share this node's
+// entry (server) and SNI. Used when representative probing skipped this node:
+// the same entry + same Worker means the same path, so a sibling's fresh
+// measurement is better evidence than this node's own stale history.
+func (s *Service) siblingRecords(ctx context.Context, nodeID uuid.UUID, checkerTag string, since time.Time) []model.NodeDeepCheck {
+	var peers []struct {
+		Server string
+		SNI    string
+	}
+	err := s.db.WithContext(ctx).Raw(`
+SELECT server, coalesce(nullif(raw::jsonb->>'sni',''), nullif(raw::jsonb->>'servername',''), nullif(raw::jsonb->>'host',''), '') AS sni
+FROM nodes WHERE id = ?`, nodeID).Scan(&peers).Error
+	if err != nil || len(peers) == 0 || peers[0].Server == "" {
+		return nil
+	}
+
+	var peerIDs []uuid.UUID
+	q := s.db.WithContext(ctx).Raw(`
+SELECT n.id FROM nodes n
+WHERE n.id <> ? AND n.server = ?
+  AND coalesce(nullif(n.raw::jsonb->>'sni',''), nullif(n.raw::jsonb->>'servername',''), nullif(n.raw::jsonb->>'host',''), '') = ?
+  AND n.archived_at IS NULL`, nodeID, peers[0].Server, peers[0].SNI)
+	if err := q.Scan(&peerIDs).Error; err != nil || len(peerIDs) == 0 {
+		return nil
+	}
+
+	var out []model.NodeDeepCheck
+	dq := s.db.WithContext(ctx).Where("node_id IN ? AND checker_tag = ?", peerIDs, checkerTag)
+	if !since.IsZero() {
+		dq = dq.Where("checked_at >= ?", since)
+	}
+	if err := dq.Order("checked_at DESC").Limit(20).Find(&out).Error; err != nil {
+		return nil
+	}
+	return out
+}
+
+// RecomputeZeroScores repairs nodes whose score collapsed to 0 while they do
+// have deep-check history. Runs once at startup: a cutoff or measurement change
+// must not silently leave nodes unscored and thereby unranked.
+func (s *Service) RecomputeZeroScores(ctx context.Context) (int, error) {
+	type row struct{ NodeID uuid.UUID }
+	var rows []row
+	err := s.db.WithContext(ctx).Raw(`
+SELECT n.id AS node_id FROM nodes n
+WHERE n.archived_at IS NULL AND n.alive AND n.score <= 0
+  AND EXISTS (SELECT 1 FROM node_deep_checks d WHERE d.node_id = n.id)`).Scan(&rows).Error
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range rows {
+		if err := s.ComputeAndUpdateTagScore(ctx, r.NodeID, "local"); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
 // ComputeAndUpdateTagScore computes the EWMA score for a specific checker tag,
 // UPSERTs node_tag_scores, then updates nodes.score with the AVG across all
 // tags that have at least one deep check recorded.
@@ -82,14 +142,36 @@ func (s *Service) ComputeAndUpdateTagScore(ctx context.Context, nodeID uuid.UUID
 	params := s.loadParams(ctx)
 
 	// Fetch the last 20 deep checks for this node+tag, newest first.
-	q := s.db.WithContext(ctx).
-		Where("node_id = ? AND checker_tag = ?", nodeID, checkerTag)
-	if !params.historySince.IsZero() {
-		q = q.Where("checked_at >= ?", params.historySince)
-	}
 	var records []model.NodeDeepCheck
-	if err := q.Order("checked_at DESC").Limit(20).Find(&records).Error; err != nil {
+	load := func(since time.Time) error {
+		records = nil
+		q := s.db.WithContext(ctx).Where("node_id = ? AND checker_tag = ?", nodeID, checkerTag)
+		if !since.IsZero() {
+			q = q.Where("checked_at >= ?", since)
+		}
+		return q.Order("checked_at DESC").Limit(20).Find(&records).Error
+	}
+	if err := load(params.historySince); err != nil {
 		return err
+	}
+
+	// Representative probing measures only a couple of nodes per entry, so most
+	// siblings of a group are never probed in a given cycle and would keep a score
+	// from whenever they were last picked. Before falling back to this node's own
+	// stale history, borrow fresh evidence from a sibling that shares the same
+	// entry and SNI: they take the same network path, so the measurement transfers.
+	if len(records) == 0 {
+		if sib := s.siblingRecords(ctx, nodeID, checkerTag, params.historySince); len(sib) > 0 {
+			records = sib
+		}
+	}
+
+	if len(records) == 0 && !params.historySince.IsZero() {
+		// Last resort: this node's own older series. Keeps a meaningful score (and
+		// its grade) rather than zeroing a node only because it was not re-checked.
+		if err := load(time.Time{}); err != nil {
+			return err
+		}
 	}
 
 	tagScore := computeScore(
@@ -268,6 +350,14 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 	params := defaults
 	if err := s.db.WithContext(ctx).Where("key IN ?", keys).Find(&rows).Error; err == nil {
 		for _, row := range rows {
+			// The cutoff is an RFC3339 timestamp, not a float: parse it before the
+			// numeric guard below, which would otherwise skip the row entirely.
+			if row.Key == "score_history_since" {
+				if ts, err := time.Parse(time.RFC3339, row.Value); err == nil {
+					params.historySince = ts
+				}
+				continue
+			}
 			v, err := strconv.ParseFloat(row.Value, 64)
 			if err != nil {
 				continue
@@ -289,10 +379,6 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 				params.latencyAnchorMs = v
 			case "score_max_jitter_ms":
 				params.jitterAnchorMs = v
-			case "score_history_since":
-				if ts, err := time.Parse(time.RFC3339, row.Value); err == nil {
-					params.historySince = ts
-				}
 			}
 		}
 	}
