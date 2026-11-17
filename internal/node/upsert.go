@@ -132,6 +132,7 @@ func (u *UpsertService) UpsertFromFetchResult(
 				tx.Model(&existing).Updates(map[string]interface{}{
 					"raw":        string(p.rawJSON),
 					"port":       p.port,
+					"server":     p.server, // identity is stable, address is not: refresh the dial target
 					"updated_at": time.Now(),
 				})
 				nodeID = existing.ID
@@ -241,9 +242,52 @@ func nodeHash(clash map[string]any) string {
 		return ""
 	}
 	auth := normalizeCredential(nodeAuth(ptype, clash))
-	canonical := fmt.Sprintf("%s|%s|%d|%s", ptype, server, port, auth)
+	canonical := fmt.Sprintf("%s|%s|%d|%s", ptype, hashIdentityServer(server), port, auth)
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:16])
+}
+
+// hashIdentityServer collapses a rotating hostname prefix to the stable
+// backend name it decorates, so re-fetching the same node does not mint a new
+// identity every round.
+//
+// Observed scheme (ikuuu, 2026-11-18): the subscription returns
+// "<7 random alnum>-g03.<stable>.entry.<domain>" and picks a NEW random prefix
+// on every request, e.g.
+//
+//	15ofrbw-g03.jp06-jz-vm0.entry.fr0528.art
+//	7phwdel-g03.jp06-jz-vm0.entry.fr0528.art
+//
+// Because nodeHash covers server, every fetch produced 7 brand-new hashes; the
+// previous rows were deleted with their check history, so the source could never
+// accumulate a measurement (0 deep checks ever, verified before this change).
+// The rotating label is transport decoration, not identity — the backend is the
+// stable remainder — so it is stripped for hashing only.
+//
+// The match is deliberately narrow (exactly one short alnum label in front of
+// "g03.") so no other source changes identity: at introduction this pattern
+// occurred in 7 nodes of exactly one source and nowhere else in the pool.
+func hashIdentityServer(server string) string {
+	const marker = "-g03."
+	if i := strings.Index(server, marker); i > 0 {
+		head := server[:i]
+		if len(head) >= 6 && len(head) <= 8 && isLowerAlnum(head) {
+			return server[i+1:] // keep "g03.<stable>", drop the rotating label
+		}
+	}
+	return server
+}
+
+// isLowerAlnum reports whether s consists only of [a-z0-9].
+func isLowerAlnum(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // normalizeCredential repeatedly percent-decodes a credential string until
