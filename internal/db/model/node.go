@@ -34,7 +34,11 @@ type Node struct {
 	Region       string    // latest region from checker
 	RegionSource string    `gorm:"not null;default:unknown"` // native_egress, legacy_egress, inbound_mmdb, checker_unspecified, unknown
 	Alive        bool      `gorm:"index;not null;default:false"`
-	Score        float64   `gorm:"not null;default:0"` // float64 [0,1]; grade only at distribution time
+	Score        float64   `gorm:"not null;default:0"` // float64 [0,1]; ordering only
+	// EffLatencyMs is the experience-equivalent latency (mean + jitter penalty +
+	// failure cost). Grade is the band cut from it, in milliseconds.
+	EffLatencyMs int    `gorm:"not null;default:0"`
+	Grade        string `gorm:"size:2;not null;default:''"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	// ArchivedAt marks a node retired from probing. The row is kept so the

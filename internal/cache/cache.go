@@ -23,6 +23,8 @@ type NodeCacheEntry struct {
 	Protocol        string
 	Raw             string  // compact JSON clash proxy fields
 	Score           float64 // per-tag EWMA score, or nodes.score in global view
+	Grade           string  // experience band derived from EffLatencyMs (S/A/B/C/D)
+	EffLatencyMs    int     // mean latency + jitter + failure cost, in ms
 	Region          string
 	RegionSource    string
 	Alive           bool

@@ -60,6 +60,12 @@ type scoreParams struct {
 	jitterThresholdMs float64
 	latencyAnchorMs   float64
 	jitterAnchorMs    float64
+	jitterWeight      float64
+	failCostMs        float64
+	gradeSMs          int
+	gradeAMs          int
+	gradeBMs          int
+	gradeCMs          int
 }
 
 const scoreParamsTTL = time.Minute
@@ -113,14 +119,15 @@ WHERE n.id <> ? AND n.server = ?
 }
 
 // RecomputeZeroScores repairs nodes whose score collapsed to 0 while they do
-// have deep-check history. Runs once at startup: a cutoff or measurement change
-// must not silently leave nodes unscored and thereby unranked.
+// have deep-check history, and backfills the experience grade for nodes that
+// predate it. Runs once at startup: a cutoff, measurement or grading change must
+// not leave nodes unscored/unlabelled and thereby unranked.
 func (s *Service) RecomputeZeroScores(ctx context.Context) (int, error) {
 	type row struct{ NodeID uuid.UUID }
 	var rows []row
 	err := s.db.WithContext(ctx).Raw(`
 SELECT n.id AS node_id FROM nodes n
-WHERE n.archived_at IS NULL AND n.alive AND n.score <= 0
+WHERE n.archived_at IS NULL AND n.alive AND (n.score <= 0 OR n.grade = '')
   AND EXISTS (SELECT 1 FROM node_deep_checks d WHERE d.node_id = n.id)`).Scan(&rows).Error
 	if err != nil {
 		return 0, err
@@ -210,10 +217,23 @@ func (s *Service) ComputeAndUpdateTagScore(ctx context.Context, nodeID uuid.UUID
 		return err
 	}
 
+	// Experience band. Derived from the newest measurement in this series, folded
+	// into one millisecond number so the label means something a person can judge.
+	var eff float64
+	grade := ""
+	if len(records) > 0 {
+		lat, jit, ok, tot := records[0].AvgLatencyMs, records[0].JitterMs, 0, 0
+		ok, tot = parsePingMeta(records[0].Metadata)
+		eff = effLatency(lat, jit, ok, tot, params.jitterWeight, params.failCostMs)
+		if eff > 0 {
+			grade = gradeForEff(eff, params.gradeSMs, params.gradeAMs, params.gradeBMs, params.gradeCMs)
+		}
+	}
+
 	return s.db.WithContext(ctx).
 		Model(&model.Node{}).
 		Where("id = ?", nodeID).
-		Update("score", avg).Error
+		Updates(map[string]any{"score": avg, "eff_latency_ms": int(eff), "grade": grade}).Error
 }
 
 // computeScore is the pure calculation (exported for testing).
@@ -334,6 +354,12 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 		jitterThresholdMs: 70,
 		latencyAnchorMs:   defaultLatencyAnchorMs,
 		jitterAnchorMs:    defaultJitterAnchorMs,
+		jitterWeight:      defaultJitterWeight,
+		failCostMs:        defaultFailCostMs,
+		gradeSMs:          defaultGradeSMs,
+		gradeAMs:          defaultGradeAMs,
+		gradeBMs:          defaultGradeBMs,
+		gradeCMs:          defaultGradeCMs,
 	}
 	keys := []string{
 		"score_decay_alpha",
@@ -345,6 +371,12 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 		"score_max_latency_ms",
 		"score_max_jitter_ms",
 		"score_history_since",
+		"grade_jitter_weight",
+		"grade_fail_cost_ms",
+		"grade_s_ms",
+		"grade_a_ms",
+		"grade_b_ms",
+		"grade_c_ms",
 	}
 	var rows []model.Config
 	params := defaults
@@ -379,6 +411,18 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 				params.latencyAnchorMs = v
 			case "score_max_jitter_ms":
 				params.jitterAnchorMs = v
+			case "grade_jitter_weight":
+				params.jitterWeight = v
+			case "grade_fail_cost_ms":
+				params.failCostMs = v
+			case "grade_s_ms":
+				params.gradeSMs = int(v)
+			case "grade_a_ms":
+				params.gradeAMs = int(v)
+			case "grade_b_ms":
+				params.gradeBMs = int(v)
+			case "grade_c_ms":
+				params.gradeCMs = int(v)
 			}
 		}
 	}

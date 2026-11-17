@@ -322,6 +322,8 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 				Protocol:        n.Protocol,
 				Raw:             n.Raw,
 				Score:           score,
+				Grade:           n.Grade,
+				EffLatencyMs:    n.EffLatencyMs,
 				Region:          n.Region,
 				RegionSource:    n.RegionSource,
 				Alive:           true,

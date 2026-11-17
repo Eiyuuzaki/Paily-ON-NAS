@@ -115,6 +115,16 @@ type namingEnv struct {
 	FilterMode  string     `expr:"filter_mode"`
 }
 
+// nodeGrade prefers the band the checker actually measured (stored as
+// nodes.grade from effective latency). Nodes that have not been re-scored since
+// the switch fall back to the older score-based band so nothing goes blank.
+func nodeGrade(entry *cache.NodeCacheEntry, gradeS, gradeA, gradeB, gradeC float64) string {
+	if entry.Grade != "" {
+		return entry.Grade
+	}
+	return gradeFromScore(entry.Score, gradeS, gradeA, gradeB, gradeC)
+}
+
 // defaultTemplate is used when no node_name_template config entry exists.
 const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
 
@@ -329,7 +339,7 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 		Node: nodeFields{
 			Region:         regionDisplay,
 			RegionFlag:     flagFor(region),
-			Grade:          gradeFromScore(entry.Score, gradeS, gradeA, gradeB, gradeC),
+			Grade:          nodeGrade(entry, gradeS, gradeA, gradeB, gradeC),
 			Score:          entry.Score,
 			Seq:            seqID(region, seqNo),
 			Server:         entry.Server,

@@ -41,6 +41,16 @@ var DefaultConfigs = map[string]string{
 	"grade_a_min":                      "0.78",
 	"grade_b_min":                      "0.60",
 	"grade_c_min":                      "0.35",
+	// Experience bands, in milliseconds of effective latency:
+	//   eff = latency + jitter_weight*jitter + fail_share*fail_cost_ms
+	// 2x jitter approximates the 97.5th percentile ("delay on a bad moment");
+	// a failed probe costs half a probe timeout of expected stall.
+	"grade_jitter_weight": "2.0",
+	"grade_fail_cost_ms":  "3000",
+	"grade_s_ms":          "200",
+	"grade_a_ms":          "400",
+	"grade_b_ms":          "600",
+	"grade_c_ms":          "1000",
 	"node_alive_check_window_minutes":  "240",
 	"check_run_history_days":           "7",
 	"cleanup_interval_minutes":         "30",
