@@ -108,14 +108,19 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			secureOther = secureOther[:otherMax]
 		}
 		picked := append(append([]*cache.NodeCacheEntry{}, cf...), secureOther...)
-		if len(picked) == 0 && len(skipOther) > 0 {
-			// No secure node in this region: allow self-signed as last resort.
-			scoreDesc(skipOther)
-			n := otherMax
-			if n <= 0 || len(skipOther) < n {
-				n = len(skipOther)
+		// Top up with self-signed (skip-cert) nodes when the secure non-CF supply
+		// cannot fill this region's otherMax slots (user: 不够就放自签). Plaintext
+		// is never used; paid/highest self-signed already counts as secure above.
+		if otherMax > 0 {
+			short := otherMax - len(secureOther)
+			if short > 0 && len(skipOther) > 0 {
+				scoreDesc(skipOther)
+				n := short
+				if len(skipOther) < n {
+					n = len(skipOther)
+				}
+				picked = append(picked, skipOther[:n]...)
 			}
-			picked = skipOther[:n]
 		}
 		lower := strings.ToLower(r)
 		for i, e := range picked {
