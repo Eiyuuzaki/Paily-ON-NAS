@@ -46,6 +46,10 @@ type Node struct {
 	// good one. Deliberately separate from Score so staleness is never punished
 	// twice.
 	Confidence string `gorm:"size:8;not null;default:'unknown';index"`
+	// TrustTier tracks infrastructure authorization: public = published for
+	// public use (free lists, own builds); T0 = unauthorized third-party relay
+	// (observed, NOT for distribution); T2 = authorized shadow; T3 = owned.
+	TrustTier string `gorm:"size:8;not null;default:'public';index"`
 	// LastDirectCheckAt is the timestamp of this node's own most recent DIRECT
 	// measurement. Inferred or borrowed data must never advance it: freshness has
 	// to describe what was actually observed on this node.

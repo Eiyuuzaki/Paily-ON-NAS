@@ -336,6 +336,7 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 			}
 			entry.SponsorText = sponsorSvc.Match(ctx, nodeEnv)
 			entry.ChainEntryOnly = chainEntryOnly
+			entry.TrustTier = n.TrustTier
 
 			entries[n.ID] = entry
 			region := n.Region

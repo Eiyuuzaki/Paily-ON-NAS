@@ -48,6 +48,10 @@ type NodeCacheEntry struct {
 	// it. Distribution must not emit it as a standalone exit — it is used only as
 	// a dialer-proxy target.
 	ChainEntryOnly bool
+
+	// TrustTier surfaces infrastructure authorization to distribution.
+	// T0 entries are excluded from subscription output but still checked.
+	TrustTier string
 }
 
 // tagSubCache is the alive-node view for a single checker tag.
