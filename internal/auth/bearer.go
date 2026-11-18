@@ -73,7 +73,9 @@ func AdminOrServiceMiddleware(jwtSecret, serviceSecret string) gin.HandlerFunc {
 // body contains usable node credentials, so an exposed port leaks them. The
 // token may be supplied as ?token= or as a Bearer header, which keeps normal
 // Clash clients working (they can use the full URL).
-func SubscribeTokenMiddleware(expected string) gin.HandlerFunc {
+// expected is a provider so the panel can rotate the token at runtime
+// (configs-table backed) without a core restart.
+func SubscribeTokenMiddleware(expected func() string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.Query("token")
 		if token == "" {
@@ -81,7 +83,7 @@ func SubscribeTokenMiddleware(expected string) gin.HandlerFunc {
 				token = h
 			}
 		}
-		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected())) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing subscribe token"})
 			return
 		}

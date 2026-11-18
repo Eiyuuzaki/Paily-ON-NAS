@@ -206,8 +206,9 @@ func main() {
 	svcMW := auth.ServiceBearerMiddleware(cfg.Auth.ServiceSecret)
 	adminMW := auth.AdminJWTMiddleware(cfg.Auth.JWTSecret)
 	sourceCreateMW := auth.AdminOrServiceMiddleware(cfg.Auth.JWTSecret, cfg.Auth.ServiceSecret)
-	subMW := auth.SubscribeTokenMiddleware(cfg.Auth.SubscribeToken)
-	if cfg.Auth.SubscribeToken == "" {
+	tokenMgr := handler.NewSubscribeTokenManager(database, cfg.Auth.SubscribeToken)
+	subMW := auth.SubscribeTokenMiddleware(tokenMgr.Get)
+	if tokenMgr.Get() == "" {
 		fmt.Fprintln(os.Stderr, "warning: auth.subscribe_token is empty — /clash, /singbox and /base64 are unauthenticated and expose working node credentials")
 	}
 
@@ -222,7 +223,7 @@ func main() {
 		case p == "/:format":
 			// Subscription output carries node credentials; guard it when a token
 			// is configured, otherwise fall through to the open behaviour.
-			if cfg.Auth.SubscribeToken == "" {
+			if tokenMgr.Get() == "" {
 				c.Next()
 				return
 			}
@@ -266,6 +267,18 @@ func main() {
 		cf.POST("/accounts/:id/check", cfHandler.CheckAccount)
 	}
 
+
+	// External access: subscription token + public subscription URLs for the
+	// panel external-access card (behind adminJWT via the default case).
+	eaHandler := handler.NewExtAccessHandler(database, tokenMgr)
+	ea := engine.Group("/api/v1/extaccess")
+	{
+		ea.GET("", eaHandler.Root)
+		ea.PUT("/token", eaHandler.SetToken)
+		ea.POST("/token/rotate", eaHandler.RotateToken)
+		ea.PUT("/host", eaHandler.SetHost)
+		ea.POST("/test", eaHandler.Test)
+	}
 	api.RegisterHandlers(engine, srv)
 
 	// Health probe — always returns 200, no auth required.
