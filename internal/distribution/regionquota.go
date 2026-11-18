@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
-	"github.com/rs/zerolog/log"
 )
 
 // rawProxy is the subset of a Clash proxy config these helpers care about.
@@ -132,22 +131,6 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 			default:
 				secureOther = append(secureOther, e)
 			}
-		}
-		if r == "US" {
-			ids := map[string]int{}
-			for _, e := range cf {
-				ids[egressIdentity(e)]++
-			}
-			rankPick(secureOther)
-			top := make([]string, 0, 5)
-			for i, e := range secureOther {
-				if i >= 5 {
-					break
-				}
-				top = append(top, fmt.Sprintf("%s|p%d|%.2f|%s", parseRaw(e.Raw).Name, e.SourcePriority, e.Score, e.Server))
-			}
-			log.Warn().Int("cf", len(cf)).Int("other", len(secureOther)).Int("skip", len(skipOther)).
-				Interface("identities", ids).Strs("top_other", top).Msg("dbg: US buckets")
 		}
 		cf = capPerEgressLimit(cf, cfPerWorker)
 		rankPick(secureOther)

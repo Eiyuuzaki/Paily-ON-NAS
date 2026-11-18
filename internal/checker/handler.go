@@ -15,6 +15,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/scoring"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/workerhealth"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
@@ -299,6 +300,12 @@ WHERE n.id = d.node_id
   AND (n.last_direct_check_at IS NULL OR n.last_direct_check_at < d.last)`, checkRunID).Error; err != nil {
 				log.Warn().Err(err).Msg("checker: last_direct_check_at update failed")
 			}
+		}
+
+		// Refresh the evidence tier for the whole pool. Cheap (one aggregate over
+		// the direct rows) and order-independent, so running it per tag is fine.
+		if err := scoring.RecomputeConfidence(ctx, h.db); err != nil {
+			log.Warn().Err(err).Msg("checker: confidence recompute failed")
 		}
 
 		// Advance the Worker circuit breaker with this run's aggregates. Kept

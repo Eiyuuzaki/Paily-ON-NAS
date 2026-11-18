@@ -96,6 +96,7 @@ type nodeFields struct {
 	Region        string          `expr:"region"`
 	RegionFlag    string          `expr:"region_flag"`
 	Grade         string          `expr:"grade"`
+	Confidence    string          `expr:"confidence"`
 	Score         float64         `expr:"score"`
 	Seq           string          `expr:"seq"`
 	Server        string          `expr:"server"`
@@ -126,7 +127,7 @@ func nodeGrade(entry *cache.NodeCacheEntry, gradeS, gradeA, gradeB, gradeC float
 }
 
 // defaultTemplate is used when no node_name_template config entry exists.
-const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
+const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + (node.confidence == "high" ? "" : " ?" + node.confidence) + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
 
 // cfNameRe extracts the region from a self-built CF node name like CF-HKG-245
 // (optional single-letter account segment, e.g. CF-C-SG-01).
@@ -340,6 +341,7 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 			Region:         regionDisplay,
 			RegionFlag:     flagFor(region),
 			Grade:          nodeGrade(entry, gradeS, gradeA, gradeB, gradeC),
+			Confidence:     entry.Confidence,
 			Score:          entry.Score,
 			Seq:            seqID(region, seqNo),
 			Server:         entry.Server,

@@ -39,6 +39,13 @@ type Node struct {
 	// failure cost). Grade is the band cut from it, in milliseconds.
 	EffLatencyMs int    `gorm:"not null;default:0"`
 	Grade        string `gorm:"size:2;not null;default:''"`
+	// Confidence describes how much independent DIRECT evidence backs the
+	// current grade: high/medium/low/unknown. It is a property of the evidence,
+	// not of quality — a slow node measured every round is high confidence in a
+	// bad reading, and a fast node measured once a week is low confidence in a
+	// good one. Deliberately separate from Score so staleness is never punished
+	// twice.
+	Confidence string `gorm:"size:8;not null;default:'unknown';index"`
 	// LastDirectCheckAt is the timestamp of this node's own most recent DIRECT
 	// measurement. Inferred or borrowed data must never advance it: freshness has
 	// to describe what was actually observed on this node.
