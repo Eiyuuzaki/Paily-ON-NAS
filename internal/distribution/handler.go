@@ -184,7 +184,8 @@ func (h *Handler) Distribute(
 	allowPaid := configInt(h.db, "dist_allow_paid_selfsigned", 1) != 0
 	allowPlain := configInt(h.db, "dist_allow_plaintext", 0) != 0
 	fallback := configString(h.db, "dist_selfsigned_fallback", "short")
-	selected := SelectRegionQuota(candidates, cfPerWorker, otherMax, allowPaid, allowPlain, fallback)
+	pathMax := configInt(h.db, "dist_per_path_max", 2)
+	selected := SelectRegionQuota(candidates, cfPerWorker, otherMax, pathMax, allowPaid, allowPlain, fallback)
 	log.Debug().Int("max", maxDistribute).Int("selected", len(selected)).Msg("distribution: region-quota selection")
 
 	log.Debug().

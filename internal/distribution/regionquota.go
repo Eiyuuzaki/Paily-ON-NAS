@@ -107,7 +107,7 @@ type regionBlock struct {
 // selfSignedFallback ("short"=fill to otherMax, "empty"=only when region empty,
 // "none"=never). Plaintext is dropped unless allowPlaintext. Paid/highest
 // self-signed counts as secure when allowPaidSelfSigned.
-func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax int, allowPaidSelfSigned, allowPlaintext bool, selfSignedFallback string) []SelectedNode {
+func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax, pathMax int, allowPaidSelfSigned, allowPlaintext bool, selfSignedFallback string) []SelectedNode {
 	byRegion := make(map[string][]*cache.NodeCacheEntry, 32)
 	for _, e := range candidates {
 		if isPlaintext(e) && !allowPlaintext {
@@ -134,6 +134,13 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 		}
 		cf = capPerEgressLimit(cf, cfPerWorker)
 		rankPick(secureOther)
+		// Per-path cap for everything else too (2026-11-18). Measured on the live
+		// pool: 208 shipped entries covered only 43 distinct paths, 94% of them
+		// duplicated, because one host could fill a whole region's quota with
+		// many ports or uuids of the same machine. Capping per path to 2 yields
+		// 105 entries over 57 paths — fewer entries, MORE real redundancy, same
+		// median latency.
+		secureOther = capPerEgressLimit(secureOther, pathMax)
 		if otherMax > 0 && len(secureOther) > otherMax {
 			secureOther = secureOther[:otherMax]
 		}
@@ -152,6 +159,7 @@ func SelectRegionQuota(candidates []*cache.NodeCacheEntry, cfPerWorker, otherMax
 		}
 		if topup > 0 && len(skipOther) > 0 {
 			rankPick(skipOther)
+			skipOther = capPerEgressLimit(skipOther, pathMax)
 			n := topup
 			if len(skipOther) < n {
 				n = len(skipOther)

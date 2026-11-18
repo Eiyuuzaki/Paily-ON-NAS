@@ -83,6 +83,7 @@ var DefaultConfigs = map[string]string{
 	// ── Distribution rules (editable in the UI) ─────────────────────────
 	"cf_per_worker_max":          "4",
 	"region_other_max":          "16",
+	"dist_per_path_max":         "2",
 	"dist_allow_paid_selfsigned": "1",
 	"dist_allow_plaintext":       "0",
 	// 1 = only ship endpoints that publish an A record (v4-only audiences).
