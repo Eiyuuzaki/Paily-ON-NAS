@@ -162,7 +162,7 @@ func (g *Generator) Generate(cfg format.FormatConfig) ([]byte, error) {
 			gm := map[string]any{
 				"name":      regionFlag(code) + " " + code + " 节点",
 				"type":      "url-test",
-				"url":       "https://www.gstatic.com/generate_204",
+				"url":       "https://cp.cloudflare.com/generate_204", // 夜间 gstatic 被 GFW 掐，区域组健康检查改 CF 自家（11-18）
 				"interval":  300,
 				"tolerance": 50,
 				"proxies":   sorted,
