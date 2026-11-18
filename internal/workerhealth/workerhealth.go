@@ -126,11 +126,14 @@ func EvaluateRun(ctx context.Context, db *gorm.DB, runID string) error {
 		if row.Med != nil { cfMed = int(*row.Med) }
 		kind := Classify(float64(cfMed), row.N, airMed, airN)
 		var cur model.WorkerHealth
-		err := db.WithContext(ctx).Where("worker_id = ?", row.SNI).First(&cur).Error
-		if err != nil { cur = model.WorkerHealth{WorkerID: row.SNI, State: string(Healthy)} }
+		found := true
+		if err := db.WithContext(ctx).Where("worker_id = ?", row.SNI).First(&cur).Error; err != nil {
+			found = false
+			cur = model.WorkerHealth{WorkerID: row.SNI, State: string(Healthy)}
+		}
 		state := State(cur.State)
 		next, _, _ := Next(state, kind, cur.ConsBad, cur.ConsGood)
-		if next == state {
+		if found && next == state {
 			db.WithContext(ctx).Model(&model.WorkerHealth{}).Where("worker_id = ?", row.SNI).Update("updated_at", now)
 			continue
 		}
