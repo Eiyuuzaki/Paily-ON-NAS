@@ -99,10 +99,16 @@ func main() {
 		cands := naming.ColoCandidates()
 		// The entry addresses actually in use must always be re-measured: they are
 		// what every node dials, and CF routing moves them between colos.
+		// v6 entry addresses are included too (2026-11-19): this filter used to
+		// be IPv4-only, so no v6 entry ever reached representativeIP and the
+		// scan never wrote a colo for one. entry_ips then held 549 v6 rows with
+		// an empty colo (the passive path cannot measure colo), and naming fell
+		// back to the node-name prefix — the source of labels like CF-US-* on an
+		// entry that actually lands on HKG at 41ms. After this change the same
+		// scan wrote 227 v6 colos, HKG entries included.
 		var inUse []string
 		database.Raw(`SELECT DISTINCT server FROM nodes
-			WHERE archived_at IS NULL AND (raw::jsonb->>'name') LIKE 'CF-%'
-			  AND server NOT LIKE '%:%'`).Scan(&inUse)
+			WHERE archived_at IS NULL AND (raw::jsonb->>'name') LIKE 'CF-%'`).Scan(&inUse)
 		limit := envIntOr("IPSCAN_LIMIT", 320)
 		conc := envIntOr("IPSCAN_CONCURRENCY", 16)
 		found, probed, err := entryip.Discover(context.Background(), database, entryip.ScanOptions{
@@ -266,7 +272,6 @@ func main() {
 		cf.DELETE("/accounts/:id", cfHandler.DeleteAccount)
 		cf.POST("/accounts/:id/check", cfHandler.CheckAccount)
 	}
-
 
 	// External access: subscription token + public subscription URLs for the
 	// panel external-access card (behind adminJWT via the default case).
