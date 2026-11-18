@@ -197,7 +197,7 @@ func representativeIP(cidr string) string {
 	cidr = strings.TrimSpace(cidr)
 	// A plain IP is used as-is (in-use entry addresses).
 	if !strings.Contains(cidr, "/") {
-		if a := net.ParseIP(cidr); a != nil && a.To4() != nil {
+		if a := net.ParseIP(cidr); a != nil {
 			return a.String()
 		}
 		return ""
@@ -206,13 +206,18 @@ func representativeIP(cidr string) string {
 	if err != nil {
 		return ""
 	}
-	base := n.IP.To4()
-	if base == nil {
-		return ""
+	if base := n.IP.To4(); base != nil {
+		ip := make(net.IP, 4)
+		copy(ip, base)
+		ip[3] = 1
+		return ip.String()
 	}
-	ip := make(net.IP, 4)
-	copy(ip, base)
-	ip[3] = 1
+	// IPv6 has no /24 to expand: probe the first address the same way the IPv4
+	// branch picks .1. Without this, v6 entry IPs never get a measured colo and
+	// naming falls back to the name prefix (the misleading "US→HK" display).
+	ip := make(net.IP, len(n.IP))
+	copy(ip, n.IP)
+	ip[len(ip)-1] = 1
 	return ip.String()
 }
 
