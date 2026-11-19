@@ -3,6 +3,8 @@ package singbox
 import (
 	"strconv"
 	"strings"
+
+	echconf "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/ech"
 )
 
 // echEnabled controls whether sbTLS injects ECH into TLS outbounds.
@@ -107,15 +109,14 @@ func sbTLS(clash map[string]any, sniKey string) map[string]any {
 	// "Reality is conflict with ECH", so REALITY nodes must stay unencrypted.
 	isReality := clashMap(clash, "reality-opts") != nil
 	if !isReality && echEnabled {
-		if ech := clashStr(clash, "ech"); ech != "" {
+		if pinned := clashStr(clash, "ech"); pinned != "" {
 			// Explicit ECHConfigList supplied by the node payload: pin it.
-			tls["ech"] = map[string]any{"enabled": true, "config": []string{ech}}
-		} else {
+			tls["ech"] = map[string]any{"enabled": true, "config": []string{pinned}}
+		} else if echconf.Enabled(clash) {
 			// No pinned config: let sing-box fetch the ECHConfigList from the
-			// DNS HTTPS record at connect time. Requires the generated config to
-			// declare a DNS server + route.default_domain_resolver (see generator).
-			// Without ECH the SNI stays in plaintext, which is exactly what a
-			// censoring middlebox matches on - see AGENTS.md 2026-11-11.
+			// DNS HTTPS record at connect time. Only done when that record
+			// actually carries a config - sing-box, like mihomo, refuses the
+			// connection otherwise, so a blind injection kills a working node.
 			tls["ech"] = map[string]any{"enabled": true}
 		}
 	}

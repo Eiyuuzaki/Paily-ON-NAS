@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/ech"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/format"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 	"gopkg.in/yaml.v3"
@@ -62,10 +63,14 @@ func injectECH(entry map[string]any, enabled bool) {
 	if _, already := entry["ech-opts"]; already {
 		return
 	}
+	// Only advertise ECH when the host actually publishes a config: both mihomo
+	// and sing-box refuse the connection when the DNS HTTPS record has none, so
+	// a blind injection turns a working node into a dead one.
+	if !ech.Enabled(entry) {
+		return
+	}
 	entry["ech-opts"] = map[string]any{"enable": true}
 }
-
-// PushWithRegion appends a proxy entry and tracks it under region for auto groups.
 func (g *Generator) PushWithRegion(n *node.ProxyNode, name, region string) {
 	g.Push(n, name)
 	if region == "" || region == "CN" {
