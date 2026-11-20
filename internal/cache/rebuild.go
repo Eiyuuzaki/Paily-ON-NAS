@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/config"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/filter"
@@ -256,6 +257,14 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 	}
 	tagSet["default"] = struct{}{} // always include the default tag
 
+	// Accounts whose Workers daily quota is spent cannot serve right now, but
+	// the nodes behind them are not broken: the account is. Keep them out of the
+	// subscription so it does not advertise endpoints that answer 429, without
+	// writing that outage into the node's own health - rotation keys on time
+	// since last success, so a quota blip recorded as failure would keep the
+	// whole fleet out for hours after the quota reset.
+	exhaustedAccounts := cfquota.ExhaustedSet(db)
+
 	newTags := make(map[string]*tagSubCache, len(tagSet)+1)
 	for tag := range tagSet {
 		liveSet := aliveInLatestRun[tag] // nil if this tag has no run data yet
@@ -274,6 +283,12 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 			// A1 already filtered alive=true; a failed latest check flips
 			// nodes.alive=false at post time, so dead nodes still exit here.
 			_ = liveSet
+
+			if n.CFAccountID != nil {
+				if _, quotaOut := exhaustedAccounts[*n.CFAccountID]; quotaOut {
+					continue
+				}
+			}
 
 			dc := latestDeepByTag[n.ID][tag]
 			streaming := decodeStreaming(dc.StreamingResult)

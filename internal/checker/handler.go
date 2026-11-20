@@ -13,6 +13,7 @@ import (
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/middleware"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
@@ -172,6 +173,7 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		    ) region_ranked WHERE rtotal <= 3 OR rgn <= 1
 		), dead_stats AS (
 		    SELECT n.id,
+		           n.cf_account_id,
 		           count(c.*) AS checks,
 		           max(c.checked_at) FILTER (WHERE c.latency_ms >= 0) AS last_ok
 		    FROM nodes n
@@ -187,6 +189,13 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		    -- that way; at the 12-slot tier it costs one probe per day instead.
 		    SELECT id FROM dead_stats
 		    WHERE checks < ?
+		       -- An account whose quota just reset is retested in full, once.
+		       -- Recovery must not depend on the rotation tier: a fleet that sat
+		       -- out an outage has no recent success to schedule on, so waiting
+		       -- for its turn would stretch recovery across many hours.
+		       OR EXISTS (SELECT 1 FROM configs r WHERE r.key = 'cf_retest_ids'
+		                  AND strpos(',' || r.value || ',',
+		                             ',' || dead_stats.cf_account_id::text || ',') > 0)
 		       OR mod(floor(extract(epoch from now()) / 7200)::int,
 		              CASE
 		                  WHEN last_ok IS NULL OR now() - last_ok > interval '24 hours' THEN 12
@@ -197,6 +206,22 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		)
 		SELECT * FROM nodes n
 		WHERE n.archived_at IS NULL
+		  AND (n.cf_account_id IS NULL OR NOT EXISTS (
+		      -- Skip accounts that have spent their Workers daily quota. Probing
+		      -- them records failures for a node whose only problem is its owner's
+		      -- traffic, and rotation keys on time since last success, so those
+		      -- recorded failures would keep the fleet out for hours after the
+		      -- quota reset. Leaving the node unprobed keeps its state untouched
+		      -- and costs nothing while the account cannot serve anyway.
+		      --
+		      -- The set is read as a plain list, never by casting the usage JSON:
+		      -- configs contains blank values and Postgres may evaluate a cast on
+		      -- rows this query would not have selected, which turned a blank
+		      -- config into a failed node query on 2026-11-21.
+		      SELECT 1 FROM configs q
+		      WHERE q.key = 'cf_exhausted_ids'
+		        AND strpos(',' || q.value || ',', ',' || n.cf_account_id::text || ',') > 0
+		  ))
 		  AND (
 		       (n.alive = false AND (
 		            (SELECT count(*) FROM node_initial_checks WHERE node_id = n.id) < ?
@@ -207,6 +232,11 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
+	// The retest queue has now been consumed. Clearing it here keeps the promise
+	// the key makes - exactly one full round - and means a node that is still
+	// dead afterwards returns to the ordinary rotation instead of being retested
+	// forever. Best effort: if this fails, the next round simply retests again.
+	cfquota.ClearRetest(h.db)
 
 	type nodeEntry struct {
 		Hash     string                  `json:"hash"`

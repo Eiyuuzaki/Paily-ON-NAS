@@ -46,6 +46,11 @@ type Node struct {
 	// good one. Deliberately separate from Score so staleness is never punished
 	// twice.
 	Confidence string `gorm:"size:8;not null;default:'unknown';index"`
+	// CFAccountID links this node to the Cloudflare account whose Worker serves
+	// it, when one can be identified from the servername. Nil means "unknown
+	// owner" and the node is never filtered by account state: quota is an
+	// account-level fact, and guessing an owner is worse than not filtering.
+	CFAccountID *uuid.UUID `gorm:"type:uuid;index"`
 	// TrustTier tracks infrastructure authorization: public = published for
 	// public use (free lists, own builds); T0 = unauthorized third-party relay
 	// (observed, NOT for distribution); T2 = authorized shadow; T3 = owned.

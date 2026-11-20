@@ -267,18 +267,32 @@ func readConfigInt(db *gorm.DB, key string, def int) int {
 	return v
 }
 
+// probeEvidenceWindow is how far back a check must exist for a node to count as
+// judged. Rotation retests a dead node at least once every twelve rounds (about
+// a day), so any window comfortably wider than that separates "measured and
+// found dead" from "we stopped looking".
+const probeEvidenceWindow = 48 * time.Hour
+
+func probeCutoff(now time.Time) time.Time { return now.Add(-probeEvidenceWindow) }
+
 // archiveNeverAliveNodes retires nodes created before cutoff that have no
 // successful initial check on record. Rows are kept rather than deleted so the
 // unique hash index keeps blocking re-ingestion: free sources republish the same
 // dead endpoints every round, and a hard delete would only recycle them.
 func archiveNeverAliveNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) (int64, error) {
+	// Silence is not evidence: a node can only be retired on checks actually
+	// made about it. Without this, an account whose quota is spent stops being
+	// probed, its nodes then look like they have "never succeeded recently",
+	// and retirement would turn a temporary account outage into permanent loss.
 	query := "UPDATE nodes SET archived_at = NOW() WHERE id IN (" +
 		"SELECT id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
 		" AND n.created_at < ? AND NOT EXISTS (SELECT 1 FROM node_initial_checks c" +
-		" WHERE c.node_id = n.id AND c.latency_ms <> -1) LIMIT ?)"
+		" WHERE c.node_id = n.id AND c.latency_ms <> -1)" +
+		" AND EXISTS (SELECT 1 FROM node_initial_checks p WHERE p.node_id = n.id" +
+		" AND p.checked_at > ?) LIMIT ?)"
 	var total int64
 	for {
-		res := db.WithContext(ctx).Exec(query, cutoff, deleteBatchSize)
+		res := db.WithContext(ctx).Exec(query, cutoff, probeCutoff(time.Now()), deleteBatchSize)
 		if res.Error != nil {
 			return total, res.Error
 		}
@@ -300,10 +314,15 @@ func archiveExhaustedNodes(ctx context.Context, db *gorm.DB, cutoff time.Time, m
 		" AND (SELECT count(*) FROM node_initial_checks c WHERE c.node_id = n.id) >= ?" +
 		" AND EXISTS (SELECT 1 FROM node_initial_checks c2 WHERE c2.node_id = n.id AND c2.latency_ms >= 0)" +
 		" AND NOT EXISTS (SELECT 1 FROM node_initial_checks c3 WHERE c3.node_id = n.id" +
-		" AND c3.latency_ms >= 0 AND c3.checked_at > ?) LIMIT ?)"
+		" AND c3.latency_ms >= 0 AND c3.checked_at > ?)" +
+		// Same rule as the never-alive pass: only retire what was actually
+		// measured. An account out of quota is not probed, so its nodes carry no
+		// fresh evidence and must not be retired on the absence of it.
+		" AND EXISTS (SELECT 1 FROM node_initial_checks p WHERE p.node_id = n.id" +
+		" AND p.checked_at > ?) LIMIT ?)"
 	var total int64
 	for {
-		res := db.WithContext(ctx).Exec(query, minChecks, cutoff, deleteBatchSize)
+		res := db.WithContext(ctx).Exec(query, minChecks, cutoff, probeCutoff(time.Now()), deleteBatchSize)
 		if res.Error != nil {
 			return total, res.Error
 		}

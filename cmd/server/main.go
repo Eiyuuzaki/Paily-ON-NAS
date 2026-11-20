@@ -256,6 +256,12 @@ func main() {
 	// CF module (opt-in advanced) — registered before RegisterHandlers so the
 	// global auth middleware sees these paths and applies adminMW by default.
 	cfHandler := handler.NewCFHandler(database)
+	// Keep each account's quota reading warm. Distribution uses it to drop an
+	// account whose Workers quota is spent, and that filter is only as good as
+	// the reading behind it; a reading refreshed on demand went stale whenever
+	// nobody had the UI open. The pool itself only changes on the checker cycle
+	// (every two hours), so a shorter interval is plenty.
+	handler.StartUsageRefresher(context.Background(), database, 5*time.Minute, aliveCache)
 	cf := engine.Group("/api/v1/cf")
 	{
 		cf.GET("/module", cfHandler.Status)
