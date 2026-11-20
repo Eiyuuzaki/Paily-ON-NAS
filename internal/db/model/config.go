@@ -48,7 +48,6 @@ var DefaultConfigs = map[string]string{
 	// band itself comes from score via grade_*_min above.
 	"grade_jitter_weight":             "2.0",
 	"grade_fail_cost_ms":              "3000",
-	"check_dead_retest_max":           "300",
 	"node_alive_check_window_minutes": "240",
 	"check_run_history_days":          "7",
 	"cleanup_interval_minutes":        "30",
@@ -70,7 +69,9 @@ var DefaultConfigs = map[string]string{
 	// Retention for nodes that DID pass a check but whose last success is
 	// older than this window (2026-11-15: was-alive-then-dead backlog).
 	// 0 disables.
-	"node_dead_retention_days": "7",
+	"node_dead_retention_days":     "7",
+	"node_exhausted_archive_hours": "48",
+	"node_exhausted_min_checks":    "20",
 	// Representative probing (internal/checker GetNodes): alive nodes that
 	// share a server are probed via rotating representatives.
 	"check_rep_per_server": "2",

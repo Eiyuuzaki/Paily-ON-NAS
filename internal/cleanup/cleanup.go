@@ -129,6 +129,27 @@ func doCleanup(db *gorm.DB, rebuild RebuildTrigger) {
 			}
 		}
 	}
+	// Exhausted nodes: once worked, then stopped succeeding across many attempts.
+	// Rotation already drove the probe cost to about one a day, so this is table
+	// hygiene rather than probe budget; the row is kept either way so the unique
+	// hash still blocks re-ingestion. The check-count floor separates a genuine
+	// failure from a node that has simply not been probed enough yet, and the
+	// success-exists guard keeps this rule disjoint from the never-alive one.
+	exhaustedHours := readConfigInt(db, "node_exhausted_archive_hours", 48)
+	exhaustedMinChecks := readConfigInt(db, "node_exhausted_min_checks", 20)
+	if exhaustedHours > 0 && exhaustedMinChecks > 0 {
+		exhaustedCutoff := now.Add(-time.Duration(exhaustedHours) * time.Hour)
+		n, err := archiveExhaustedNodes(ctx, db, exhaustedCutoff, exhaustedMinChecks)
+		if err != nil {
+			log.Warn().Err(err).Msg("cleanup: archive exhausted nodes failed")
+		} else if n > 0 {
+			log.Info().Int64("rows", n).Int("no_success_hours", exhaustedHours).
+				Int("min_checks", exhaustedMinChecks).Msg("cleanup: archived exhausted nodes")
+			if rebuild != nil {
+				rebuild.TriggerRebuild(ctx)
+			}
+		}
+	}
 
 	// ── Time-of-day health aggregation ─────────────────────────────
 	// Pre-aggregate per-hour alive rates (7-day window) so the
@@ -258,6 +279,31 @@ func archiveNeverAliveNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) 
 	var total int64
 	for {
 		res := db.WithContext(ctx).Exec(query, cutoff, deleteBatchSize)
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < deleteBatchSize {
+			return total, nil
+		}
+	}
+}
+
+// archiveExhaustedNodes retires dead nodes that have been probed enough times
+// to be judged and still have not succeeded within the cutoff. Unlike
+// archiveStaleDeadNodes it demands a minimum number of checks, so a node added
+// moments ago cannot be retired before it was ever given a fair chance, and the
+// success-exists guard keeps it disjoint from archiveNeverAliveNodes.
+func archiveExhaustedNodes(ctx context.Context, db *gorm.DB, cutoff time.Time, minChecks int) (int64, error) {
+	query := "UPDATE nodes SET archived_at = NOW() WHERE id IN (" +
+		"SELECT n.id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
+		" AND (SELECT count(*) FROM node_initial_checks c WHERE c.node_id = n.id) >= ?" +
+		" AND EXISTS (SELECT 1 FROM node_initial_checks c2 WHERE c2.node_id = n.id AND c2.latency_ms >= 0)" +
+		" AND NOT EXISTS (SELECT 1 FROM node_initial_checks c3 WHERE c3.node_id = n.id" +
+		" AND c3.latency_ms >= 0 AND c3.checked_at > ?) LIMIT ?)"
+	var total int64
+	for {
+		res := db.WithContext(ctx).Exec(query, minChecks, cutoff, deleteBatchSize)
 		if res.Error != nil {
 			return total, res.Error
 		}

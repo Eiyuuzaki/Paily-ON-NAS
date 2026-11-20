@@ -83,11 +83,13 @@ func readConfigInt(db *gorm.DB, key string, defaultVal int) int {
 //	         turn alive or accumulate enough failed rounds. New nodes from
 //	         the fetcher start at zero checks here, so discovery is not
 //	         broken by the tiering.
-//	tier 3 — proven-dead nodes: deterministic hash-bucket sweep; each node
-//	         is probed when its bucket matches the current time slot, i.e.
-//	         once per check_dead_sweep_slots rounds (= once a day at the
-//	         default 2h cadence). Failed sweeps still write check history,
-//	         so the 4-day source-dead window keeps working unchanged.
+//	tier 3 — dead nodes: rotation, not a fixed sweep. The interval since a
+//	         node's last success stretches its probe cadence (<2h every
+//	         round, 2-6h every second, 6-24h every fourth, beyond that and
+//	         never-successful every twelfth). A node that stops working for
+//	         reasons probing cannot fix therefore costs about one probe a
+//	         day instead of one per round. Rotation still writes check
+//	         history, so the 4-day source-dead window keeps working.
 //
 // Without tiering, a pool of ~1500 nodes with ~4% alive wastes 96% of each
 // round's connections on dead nodes (measured 2026-10-24: 8m24s per round).
