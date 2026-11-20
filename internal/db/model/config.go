@@ -37,30 +37,28 @@ var DefaultConfigs = map[string]string{
 	"score_max_jitter_ms":  "400",
 	// Grade bands. Tuned 2026-11-17 against 844 live CF nodes after the probing
 	// fix flattened the pool: S top ~0.5%, A ~2.7%, B ~32%, C ~56%.
-	"grade_s_min":                      "0.85",
-	"grade_a_min":                      "0.78",
-	"grade_b_min":                      "0.60",
-	"grade_c_min":                      "0.35",
-	// Experience bands, in milliseconds of effective latency:
+	"grade_s_min": "0.85",
+	"grade_a_min": "0.78",
+	"grade_b_min": "0.60",
+	"grade_c_min": "0.35",
+	// Effective latency, kept as a display figure only:
 	//   eff = latency + jitter_weight*jitter + fail_share*fail_cost_ms
 	// 2x jitter approximates the 97.5th percentile ("delay on a bad moment");
-	// a failed probe costs half a probe timeout of expected stall.
-	"grade_jitter_weight": "2.0",
-	"grade_fail_cost_ms":  "3000",
-	"grade_s_ms":          "200",
-	"grade_a_ms":          "400",
-	"grade_b_ms":          "600",
-	"grade_c_ms":          "1000",
-	"node_alive_check_window_minutes":  "240",
-	"check_run_history_days":           "7",
-	"cleanup_interval_minutes":         "30",
-	"default_sponsor_text":             "",
-	"node_distribute_filter":           "",
-	"node_name_template":               `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`,
-	"filename_clash":                   "Paily Connect.yaml",
-	"filename_singbox":                 "Paily Connect.json",
-	"filename_base64":                  "Paily Connect.txt",
-	"profile_update_interval":          "24",
+	// a failed probe costs half a probe timeout of expected stall. The letter
+	// band itself comes from score via grade_*_min above.
+	"grade_jitter_weight":             "2.0",
+	"grade_fail_cost_ms":              "3000",
+	"check_dead_retest_max":           "300",
+	"node_alive_check_window_minutes": "240",
+	"check_run_history_days":          "7",
+	"cleanup_interval_minutes":        "30",
+	"default_sponsor_text":            "",
+	"node_distribute_filter":          "",
+	"node_name_template":              `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + " · " + (node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`,
+	"filename_clash":                  "Paily Connect.yaml",
+	"filename_singbox":                "Paily Connect.json",
+	"filename_base64":                 "Paily Connect.txt",
+	"profile_update_interval":         "24",
 	// ── Pool hygiene ────────────────────────────────────────────────────
 	// Ingress gate (internal/node.gateIncoming): free sources republish the
 	// same dead endpoints every round, so new entries are capped per
@@ -82,11 +80,11 @@ var DefaultConfigs = map[string]string{
 	"ingress_max_new_per_source": "40",
 	// ── Distribution rules (editable in the UI) ─────────────────────────
 	"cf_per_worker_max":          "4",
-	"region_other_max":          "16",
-	"dist_per_path_max":         "2",
+	"region_other_max":           "16",
+	"dist_per_path_max":          "2",
 	"dist_allow_paid_selfsigned": "1",
 	"dist_allow_plaintext":       "0",
 	// 1 = only ship endpoints that publish an A record (v4-only audiences).
-	"dist_require_ipv4": "0",
-	"dist_selfsigned_fallback":   "short",
+	"dist_require_ipv4":        "0",
+	"dist_selfsigned_fallback": "short",
 }

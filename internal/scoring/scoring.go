@@ -6,11 +6,12 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -32,6 +33,14 @@ const (
 const (
 	defaultLatencyAnchorMs float64 = 1500
 	defaultJitterAnchorMs  float64 = 400
+)
+
+// Normalisation curves. "log" is the historical curve; "exp" decays
+// asymptotically so no sample saturates. See computeScore for the measurement
+// that motivated the alternative.
+const (
+	curveLog = "log"
+	curveExp = "exp"
 )
 
 // Service implements checker.ScoringPort.
@@ -60,12 +69,13 @@ type scoreParams struct {
 	jitterThresholdMs float64
 	latencyAnchorMs   float64
 	jitterAnchorMs    float64
+	curve             string
 	jitterWeight      float64
 	failCostMs        float64
-	gradeSMs          int
-	gradeAMs          int
-	gradeBMs          int
-	gradeCMs          int
+	gradeSMin         float64
+	gradeAMin         float64
+	gradeBMin         float64
+	gradeCMin         float64
 }
 
 const scoreParamsTTL = time.Minute
@@ -193,6 +203,7 @@ func (s *Service) ComputeAndUpdateTagScore(ctx context.Context, nodeID uuid.UUID
 		params.jitterThresholdMs,
 		params.latencyAnchorMs,
 		params.jitterAnchorMs,
+		params.curve,
 	)
 
 	// UPSERT node_tag_scores.
@@ -219,18 +230,15 @@ func (s *Service) ComputeAndUpdateTagScore(ctx context.Context, nodeID uuid.UUID
 		return err
 	}
 
-	// Experience band. Derived from the newest measurement in this series, folded
-	// into one millisecond number so the label means something a person can judge.
+	// Effective latency stays a display figure; the band now comes from the score
+	// so a node cannot be labelled D while its quality number says A.
 	var eff float64
-	grade := ""
 	if len(records) > 0 {
 		lat, jit, ok, tot := records[0].AvgLatencyMs, records[0].JitterMs, 0, 0
 		ok, tot = parsePingMeta(records[0].Metadata)
 		eff = effLatency(lat, jit, ok, tot, params.jitterWeight, params.failCostMs)
-		if eff > 0 {
-			grade = gradeForEff(eff, params.gradeSMs, params.gradeAMs, params.gradeBMs, params.gradeCMs)
-		}
 	}
+	grade := gradeForScore(avg, params.gradeSMin, params.gradeAMin, params.gradeBMin, params.gradeCMin)
 
 	return s.db.WithContext(ctx).
 		Model(&model.Node{}).
@@ -243,6 +251,7 @@ func computeScore(
 	records []model.NodeDeepCheck,
 	alpha, wLatency, wStability, wSpeed, latencyCurveK, jitterLinearThresholdMs,
 	latencyAnchorMs, jitterAnchorMs float64,
+	curve string,
 ) float64 {
 	if len(records) == 0 {
 		return 0.0
@@ -281,23 +290,35 @@ func computeScore(
 	weightedJitter := sumJitter / sumW
 
 	// Step 2 — Normalise to [0,1].
-	latencyX := clamp01(weightedLatency / latencyAnchorMs)
-	if latencyCurveK <= 0 {
-		latencyCurveK = 0.3
-	}
-	scoreLatency := 1.0 - math.Log(1.0+latencyCurveK*latencyX)/math.Log(1.0+latencyCurveK)
+	latencyX := weightedLatency / latencyAnchorMs
+	jitterX := weightedJitter / jitterAnchorMs
 
-	jitterX := clamp01(weightedJitter / jitterAnchorMs)
-	t := clamp01(jitterLinearThresholdMs / jitterAnchorMs)
-	if t <= 0 || t >= 1 {
-		t = 70.0 / jitterAnchorMs
-	}
-
-	var scoreStability float64
-	if jitterX <= t {
-		scoreStability = 1.0 - jitterX
+	var scoreLatency, scoreStability float64
+	if curve == curveExp {
+		// Exponential decay is asymptotic, so a node at twice the anchor still
+		// ranks below one at 1.5x instead of tying it at zero. Replayed against
+		// the live pool on 2026-11-20 (1115 nodes): the log curve tied 359 nodes
+		// at exactly 0, and its worst decile held only 2 distinct values across
+		// 112 nodes — the band where the dispatcher most needs to discriminate.
+		scoreLatency = math.Exp(-latencyX)
+		scoreStability = math.Exp(-jitterX)
 	} else {
-		scoreStability = (1.0 - t) * math.Sqrt((1.0-jitterX)/(1.0-t))
+		latencyX = clamp01(latencyX)
+		if latencyCurveK <= 0 {
+			latencyCurveK = 0.3
+		}
+		scoreLatency = 1.0 - math.Log(1.0+latencyCurveK*latencyX)/math.Log(1.0+latencyCurveK)
+
+		jitterX = clamp01(jitterX)
+		t := clamp01(jitterLinearThresholdMs / jitterAnchorMs)
+		if t <= 0 || t >= 1 {
+			t = 70.0 / jitterAnchorMs
+		}
+		if jitterX <= t {
+			scoreStability = 1.0 - jitterX
+		} else {
+			scoreStability = (1.0 - t) * math.Sqrt((1.0-jitterX)/(1.0-t))
+		}
 	}
 
 	// Step 3 — Compute quality score and blend in speed when available.
@@ -356,12 +377,13 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 		jitterThresholdMs: 70,
 		latencyAnchorMs:   defaultLatencyAnchorMs,
 		jitterAnchorMs:    defaultJitterAnchorMs,
+		curve:             curveLog,
 		jitterWeight:      defaultJitterWeight,
 		failCostMs:        defaultFailCostMs,
-		gradeSMs:          defaultGradeSMs,
-		gradeAMs:          defaultGradeAMs,
-		gradeBMs:          defaultGradeBMs,
-		gradeCMs:          defaultGradeCMs,
+		gradeSMin:         defaultGradeSMin,
+		gradeAMin:         defaultGradeAMin,
+		gradeBMin:         defaultGradeBMin,
+		gradeCMin:         defaultGradeCMin,
 	}
 	keys := []string{
 		"score_decay_alpha",
@@ -373,12 +395,13 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 		"score_max_latency_ms",
 		"score_max_jitter_ms",
 		"score_history_since",
+		"score_curve",
 		"grade_jitter_weight",
 		"grade_fail_cost_ms",
-		"grade_s_ms",
-		"grade_a_ms",
-		"grade_b_ms",
-		"grade_c_ms",
+		"grade_s_min",
+		"grade_a_min",
+		"grade_b_min",
+		"grade_c_min",
 	}
 	var rows []model.Config
 	params := defaults
@@ -386,6 +409,15 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 		for _, row := range rows {
 			// The cutoff is an RFC3339 timestamp, not a float: parse it before the
 			// numeric guard below, which would otherwise skip the row entirely.
+			if row.Key == "score_curve" {
+				switch strings.ToLower(strings.TrimSpace(row.Value)) {
+				case curveExp:
+					params.curve = curveExp
+				case curveLog:
+					params.curve = curveLog
+				}
+				continue
+			}
 			if row.Key == "score_history_since" {
 				if ts, err := time.Parse(time.RFC3339, row.Value); err == nil {
 					params.historySince = ts
@@ -417,14 +449,14 @@ func (s *Service) loadParams(ctx context.Context) scoreParams {
 				params.jitterWeight = v
 			case "grade_fail_cost_ms":
 				params.failCostMs = v
-			case "grade_s_ms":
-				params.gradeSMs = int(v)
-			case "grade_a_ms":
-				params.gradeAMs = int(v)
-			case "grade_b_ms":
-				params.gradeBMs = int(v)
-			case "grade_c_ms":
-				params.gradeCMs = int(v)
+			case "grade_s_min":
+				params.gradeSMin = v
+			case "grade_a_min":
+				params.gradeAMin = v
+			case "grade_b_min":
+				params.gradeBMin = v
+			case "grade_c_min":
+				params.gradeCMin = v
 			}
 		}
 	}

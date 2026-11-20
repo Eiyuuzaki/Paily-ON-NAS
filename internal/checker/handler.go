@@ -15,10 +15,10 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
-	"github.com/Eiyuuzaki/paily-on-nas/internal/scoring"
-	"github.com/Eiyuuzaki/paily-on-nas/internal/workerhealth"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/scoring"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/workerhealth"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -102,6 +102,15 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	// handshake, CDN hiccup) become permanent silent death. See AGENTS.md
 	// 2026-11-11: HidenCloud app2301 was alive the whole time but invisible.
 	deadGraceMin := readConfigInt(h.db, "check_dead_grace_minutes", 360)
+	// deadRetestMax caps how many recently-failed dead nodes are re-probed in one
+	// round. The grace window above is deliberately generous, but it was also
+	// unbounded: on 2026-11-20 every dead node carried a recent failure, so all
+	// 1069 qualified, the checker ran 2194 probes in one round, and the connection
+	// pressure turned timeouts into fresh deaths - the pool collapsed from 970
+	// alive to 286 in a single cycle. The cap turns that cliff into a bounded
+	// queue: most-recently-failed first, the rest wait for the next round. Retire
+	// this config once the pool is small enough that all dead nodes fit in a round.
+	deadRetestMax := readConfigInt(h.db, "check_dead_retest_max", 300)
 	// Representative probing (2026-11-15): alive nodes that share a server are
 	// the same backend — one entry IP × one Worker — so their availability is
 	// linked and probing all of them every round buys nothing (431 alive HKG
@@ -183,13 +192,23 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		  AND (
 		       (n.alive = false AND (
 		            (SELECT count(*) FROM node_initial_checks WHERE node_id = n.id) < ?
-		            OR EXISTS (SELECT 1 FROM node_initial_checks
-		               WHERE node_id = n.id AND latency_ms = -1
-		               AND checked_at > now() - make_interval(mins => ?))
+		            OR n.id IN (
+		                SELECT id FROM (
+		                    SELECT n2.id,
+		                        row_number() OVER (ORDER BY (
+		                            SELECT max(c.checked_at) FROM node_initial_checks c
+		                            WHERE c.node_id = n2.id AND c.latency_ms = -1) DESC NULLS LAST) AS rf
+		                    FROM nodes n2
+		                    WHERE n2.archived_at IS NULL AND n2.alive = false
+		                      AND EXISTS (SELECT 1 FROM node_initial_checks c2
+		                        WHERE c2.node_id = n2.id AND c2.latency_ms = -1
+		                          AND c2.checked_at > now() - make_interval(mins => ?))
+		                ) rf_ranked WHERE rf <= ?
+		            )
 		            OR mod(abs(hashtext(n.id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
 		       ))
 		       OR (n.alive = true AND n.id IN (SELECT id FROM reps))
-		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, deadGraceMin, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
+		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, deadGraceMin, deadRetestMax, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -510,9 +529,9 @@ func (h *Handler) overrideCFRegionFromEntryColo(ctx context.Context, ids []uuid.
 		return
 	}
 	type row struct {
-		ID     uuid.UUID
-		Name   string
-		Colo   string
+		ID   uuid.UUID
+		Name string
+		Colo string
 	}
 	var rows []row
 	if err := h.db.WithContext(ctx).Raw(`

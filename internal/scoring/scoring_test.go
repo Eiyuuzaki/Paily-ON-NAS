@@ -19,7 +19,7 @@ func recs(lat, jit int, n int) []model.NodeDeepCheck {
 // 330ms, an HKG entry around 490ms, and a degraded one past 1.2s.
 func TestScoreSpreadsAcrossAnchors(t *testing.T) {
 	score := func(lat, jit int) float64 {
-		return computeScore(recs(lat, jit, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400)
+		return computeScore(recs(lat, jit, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400, curveLog)
 	}
 	fast := score(330, 2)
 	mid := score(490, 20)
@@ -43,9 +43,9 @@ func TestScoreSpreadsAcrossAnchors(t *testing.T) {
 // A node that answers quickly but fails samples must not outrank a slower node
 // that answers every time.
 func TestTimeoutsArePenalised(t *testing.T) {
-	steady := computeScore(recs(500, 20, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400)
+	steady := computeScore(recs(500, 20, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400, curveLog)
 	flaky := append(recs(300, 5, 3), recs(-1, -1, 2)...)
-	got := computeScore(flaky, 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400)
+	got := computeScore(flaky, 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400, curveLog)
 	if got >= steady {
 		t.Fatalf("flaky(2 timeouts)=%.3f should score below steady=%.3f", got, steady)
 	}
@@ -53,7 +53,7 @@ func TestTimeoutsArePenalised(t *testing.T) {
 
 func TestAnchorFallback(t *testing.T) {
 	// Zero anchors must not divide by zero; defaults apply.
-	got := computeScore(recs(330, 5, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 0, 0)
+	got := computeScore(recs(330, 5, 5), 0.7, 0.7, 0.3, 0.55, 0.3, 70, 0, 0, curveLog)
 	if math.IsNaN(got) || got <= 0 {
 		t.Fatalf("zero anchors produced %v", got)
 	}

@@ -18,7 +18,7 @@ func TestRealSample(t *testing.T) {
 		for i := range r {
 			r[i] = model.NodeDeepCheck{AvgLatencyMs: c.lat, JitterMs: c.jit}
 		}
-		got := computeScore(r, 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400)
+		got := computeScore(r, 0.7, 0.7, 0.3, 0.55, 0.3, 70, 1500, 400, curveLog)
 		t.Logf("lat=%d jit=%d n=%d -> %.3f", c.lat, c.jit, c.n, got)
 	}
 }

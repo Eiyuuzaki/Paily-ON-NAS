@@ -1,37 +1,32 @@
 package scoring
 
-import "fmt"
-
-// Grade is a human-facing quality band, derived from measured experience rather
-// than from the 0..1 score.
+// Grade is the human-facing quality band. It is cut from the score, so a node
+// has exactly one quality number and one label.
 //
-// Why not grade the score: the score is a normalised blend whose anchors had to
-// be retuned twice in one day (cold-start -> warm probing, then the speed bug).
-// A band cut from it drifts, and "0.78 is a B" means nothing to a person picking
-// a node.
+// An earlier revision banded effective latency instead, arguing that a band cut
+// from the score would drift because the score's anchors had been retuned twice
+// in one day. That reasoning held only while the score saturated: 359 of 1115
+// nodes sat at exactly 0, so no band cut from it could separate them. With the
+// exponential curve in place (2026-11-20) the score spreads over 853 distinct
+// values, and the latency band became the unstable one — it read only the newest
+// sample and weighted jitter 2x, so a single spike moved a node from A to D
+// while its score held at 0.79. That left 341 nodes labelled D, 14 of them
+// scoring above 0.78, and 225 of the 392 C nodes scoring at B level.
 //
-// Effective latency folds the two things a user actually feels into one number
-// in milliseconds:
-//
-//	eff = latency + jitterWeight*jitter + failShare*failCostMs
-//
-//   - latency+2*jitter is roughly the 97.5th percentile of a normal sample, i.e.
-//     the delay felt "on a bad moment", not the lucky average.
-//   - A failed probe is a stall for the user, costed at half the probe timeout.
-//
-// Bands then sit on the same millisecond values every client displays.
+// Bands therefore come from the score, using the edges the UI already
+// advertises (grade_*_min). Effective latency is kept as a display figure only.
 const (
 	defaultJitterWeight = 2.0
 	defaultFailCostMs   = 3000.0
+)
 
-	// Band edges in milliseconds of effective latency, placed on the measured
-	// distribution of 831 live CF nodes (2026-11-17): the pool splits into a fast
-	// cluster below 600ms and a slow one at 800-1200ms, with little in between.
-	// An A edge of 350 fell into that gap and left the band empty.
-	defaultGradeSMs = 200
-	defaultGradeAMs = 400
-	defaultGradeBMs = 600
-	defaultGradeCMs = 1000
+// defaultGrade{S,A,B,C}Min are the score edges used when the config table has no
+// override. They mirror the values config.go seeds.
+const (
+	defaultGradeSMin = 0.85
+	defaultGradeAMin = 0.78
+	defaultGradeBMin = 0.60
+	defaultGradeCMin = 0.35
 )
 
 // effLatency computes the effective latency of one measurement.
@@ -52,23 +47,22 @@ func effLatency(latencyMs, jitterMs int, success, total int, jitterWeight, failC
 	return eff
 }
 
-// gradeForEff maps an effective latency to a letter using millisecond edges.
-func gradeForEff(eff float64, s, a, b, c int) string {
+// gradeForScore maps a 0..1 score to a letter. A score of 0 means "no usable
+// evidence" rather than "worst node", so it yields an empty grade and the node
+// stays unlabelled instead of being presented as很差.
+func gradeForScore(score, s, a, b, c float64) string {
 	switch {
-	case eff <= float64(s):
+	case score <= 0:
+		return ""
+	case score >= s:
 		return "S"
-	case eff <= float64(a):
+	case score >= a:
 		return "A"
-	case eff <= float64(b):
+	case score >= b:
 		return "B"
-	case eff <= float64(c):
+	case score >= c:
 		return "C"
 	default:
 		return "D"
 	}
-}
-
-// describe is used in logs to show why a node landed in its band.
-func describe(eff float64, grade string) string {
-	return fmt.Sprintf("%.0fms/%s", eff, grade)
 }
