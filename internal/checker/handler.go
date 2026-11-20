@@ -94,23 +94,11 @@ func readConfigInt(db *gorm.DB, key string, defaultVal int) int {
 // Tunables live in the configs table; deleting the rows restores defaults.
 func (h *Handler) GetNodes(c *gin.Context) {
 	proofRounds := readConfigInt(h.db, "check_dead_proof_rounds", 4)
-	sweepSlots := readConfigInt(h.db, "check_dead_sweep_slots", 12)
-	// deadGraceMin keeps recently-dead nodes on the full-probe list for a
-	// grace window (default 6h = ~3 checker rounds at the 2h cron). Without
-	// this a single timeout verdict drops the node to the 1/12 sweep for the
-	// rest of its life, and transient failures (CGNAT route flip, cold ECH
-	// handshake, CDN hiccup) become permanent silent death. See AGENTS.md
-	// 2026-11-11: HidenCloud app2301 was alive the whole time but invisible.
-	deadGraceMin := readConfigInt(h.db, "check_dead_grace_minutes", 360)
-	// deadRetestMax caps how many recently-failed dead nodes are re-probed in one
-	// round. The grace window above is deliberately generous, but it was also
-	// unbounded: on 2026-11-20 every dead node carried a recent failure, so all
-	// 1069 qualified, the checker ran 2194 probes in one round, and the connection
-	// pressure turned timeouts into fresh deaths - the pool collapsed from 970
-	// alive to 286 in a single cycle. The cap turns that cliff into a bounded
-	// queue: most-recently-failed first, the rest wait for the next round. Retire
-	// this config once the pool is small enough that all dead nodes fit in a round.
-	deadRetestMax := readConfigInt(h.db, "check_dead_retest_max", 300)
+	// Dead-node probing is governed by rotation, not by a grace window: see the
+	// dead_due CTE below. A node is re-probed on a cadence that stretches with
+	// the time since its last success, so a fleet that has stopped working (a
+	// quota-exhausted CF pool, say) costs one probe a day instead of one per
+	// round until the archive window closes.
 	// Representative probing (2026-11-15): alive nodes that share a server are
 	// the same backend — one entry IP × one Worker — so their availability is
 	// linked and probing all of them every round buys nothing (431 alive HKG
@@ -131,12 +119,6 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	}
 	if proofRounds < 1 {
 		proofRounds = 1
-	}
-	if sweepSlots < 1 {
-		sweepSlots = 1
-	}
-	if deadGraceMin < 0 {
-		deadGraceMin = 0
 	}
 
 	var nodes []model.Node
@@ -186,29 +168,40 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		        FROM nodes
 		        WHERE archived_at IS NULL AND alive = true AND coalesce(region, '') <> ''
 		    ) region_ranked WHERE rtotal <= 3 OR rgn <= 1
+		), dead_stats AS (
+		    SELECT n.id,
+		           count(c.*) AS checks,
+		           max(c.checked_at) FILTER (WHERE c.latency_ms >= 0) AS last_ok
+		    FROM nodes n
+		    LEFT JOIN node_initial_checks c ON c.node_id = n.id
+		    WHERE n.archived_at IS NULL AND n.alive = false
+		    GROUP BY n.id
+		), dead_due AS (
+		    -- Rotation: the longer a node has gone without a successful check, the
+		    -- less often it is worth a probe slot. This replaces the previous
+		    -- "retest every recently-failed node, capped at N" rule, which still
+		    -- spent a full probe per dead node per round until the 7-day archive
+		    -- window closed. A quota-exhausted CF fleet would burn ~84 rounds each
+		    -- that way; at the 12-slot tier it costs one probe per day instead.
+		    SELECT id FROM dead_stats
+		    WHERE checks < ?
+		       OR mod(floor(extract(epoch from now()) / 7200)::int,
+		              CASE
+		                  WHEN last_ok IS NULL OR now() - last_ok > interval '24 hours' THEN 12
+		                  WHEN now() - last_ok > interval '6 hours' THEN 4
+		                  WHEN now() - last_ok > interval '2 hours' THEN 2
+		                  ELSE 1
+		              END) = 0
 		)
 		SELECT * FROM nodes n
 		WHERE n.archived_at IS NULL
 		  AND (
 		       (n.alive = false AND (
 		            (SELECT count(*) FROM node_initial_checks WHERE node_id = n.id) < ?
-		            OR n.id IN (
-		                SELECT id FROM (
-		                    SELECT n2.id,
-		                        row_number() OVER (ORDER BY (
-		                            SELECT max(c.checked_at) FROM node_initial_checks c
-		                            WHERE c.node_id = n2.id AND c.latency_ms = -1) DESC NULLS LAST) AS rf
-		                    FROM nodes n2
-		                    WHERE n2.archived_at IS NULL AND n2.alive = false
-		                      AND EXISTS (SELECT 1 FROM node_initial_checks c2
-		                        WHERE c2.node_id = n2.id AND c2.latency_ms = -1
-		                          AND c2.checked_at > now() - make_interval(mins => ?))
-		                ) rf_ranked WHERE rf <= ?
-		            )
-		            OR mod(abs(hashtext(n.id::text)), ?) = mod(floor(extract(epoch from now()) / 7200)::int, ?)
+		            OR n.id IN (SELECT id FROM dead_due)
 		       ))
 		       OR (n.alive = true AND n.id IN (SELECT id FROM reps))
-		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, deadGraceMin, deadRetestMax, sweepSlots, sweepSlots).Scan(&nodes).Error; err != nil {
+		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, proofRounds).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -610,10 +603,20 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 	}
 }
 
-// batchAliveDecision executes a single DISTINCT-ON query to find the latest
-// initial check for each node within the alive window, then batch-updates
-// nodes.alive in two UPDATE statements (alive / dead).
-// Returns the list of node IDs that are now dead.
+// batchAliveDecision decides nodes.alive from every check recorded inside the
+// window, then batch-updates the two verdict sets.
+//
+// The verdict is the majority of the window, not the newest sample. Reading
+// only the newest sample (the previous behaviour) promoted a single bad round
+// into a permanent verdict: on 2026-11-21 a burst of dial_failed at 02:13
+// killed 1044 nodes that had passed 98-99% of the seven preceding rounds, and
+// they stayed dead for thirteen hours.
+//
+// Nodes with no check inside the window are left untouched. Silence is not
+// evidence of death: a healthy node may simply not be due yet, and treating
+// absence as failure would flip live nodes dead as soon as probing is thinned.
+//
+// Returns the node IDs this round judged dead.
 func (h *Handler) batchAliveDecision(
 	ctx context.Context,
 	nodeIDs []uuid.UUID,
@@ -625,24 +628,27 @@ func (h *Handler) batchAliveDecision(
 	}
 
 	type row struct {
-		NodeID    uuid.UUID
-		LatencyMs int
+		NodeID   uuid.UUID
+		OkCount  int
+		BadCount int
 	}
 
 	windowStart := time.Now().Add(-time.Duration(windowMinutes) * time.Minute)
 	const batchSize = 10000
 
-	// Collect all recent checks per node across ALL tags within the window.
-	// A node is alive if ANY checker reported it alive recently.
+	// Aggregate every check inside the window across ALL tags: one checker
+	// seeing the node work is enough to keep it in the pool.
 	var rows []row
 	for _, batch := range chunkUUIDs(nodeIDs, batchSize) {
 		var batchRows []row
 		if err := h.db.WithContext(ctx).Raw(`
-			SELECT DISTINCT ON (node_id, checker_tag) node_id, latency_ms
+			SELECT node_id,
+			       count(*) FILTER (WHERE latency_ms >= 0) AS ok_count,
+			       count(*) FILTER (WHERE latency_ms < 0)  AS bad_count
 			FROM node_initial_checks
 			WHERE node_id IN (?)
 			  AND checked_at >= ?
-			ORDER BY node_id, checker_tag, checked_at DESC
+			GROUP BY node_id
 		`, batch, windowStart).Scan(&batchRows).Error; err != nil {
 			log.Warn().Err(err).Int("batch_size", len(batch)).Msg("checker: batchAliveDecision query failed")
 			return nil
@@ -650,17 +656,20 @@ func (h *Handler) batchAliveDecision(
 		rows = append(rows, batchRows...)
 	}
 
-	// Partition into alive / dead sets.
-	aliveSet := make(map[uuid.UUID]struct{}, len(rows))
+	// Partition into alive / dead sets; a node absent from rows keeps its
+	// current state because it was simply not probed this window.
+	verdict := make(map[uuid.UUID]bool, len(rows))
 	for _, r := range rows {
-		if r.LatencyMs != -1 {
-			aliveSet[r.NodeID] = struct{}{}
-		}
+		verdict[r.NodeID] = r.OkCount > 0 && r.OkCount >= r.BadCount
 	}
 
 	var aliveIDs, deadIDs []uuid.UUID
 	for _, id := range nodeIDs {
-		if _, ok := aliveSet[id]; ok {
+		alive, seen := verdict[id]
+		if !seen {
+			continue
+		}
+		if alive {
 			aliveIDs = append(aliveIDs, id)
 		} else {
 			deadIDs = append(deadIDs, id)
