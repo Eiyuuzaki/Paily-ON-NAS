@@ -1,6 +1,7 @@
 package clash
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"sort"
@@ -49,6 +50,23 @@ func (g *Generator) Push(n *node.ProxyNode, name string) {
 // Defaults to true; call with false to emit configs without ECH for
 // clients that cannot handle it.
 func (g *Generator) SetECHEnabled(v bool) { g.echEnabled = v }
+
+// PrewarmECH resolves ECH availability for the entries about to be pushed, in
+// parallel. Push consults the DNS HTTPS record per TLS entry, so a lazy lookup
+// cost one sequential round trip per distinct hostname and put a 72s tail on
+// the subscription endpoint once the pool carried fifty-plus hosts.
+func (g *Generator) PrewarmECH(ctx context.Context, proxies []*node.ProxyNode) {
+	hosts := make([]string, 0, len(proxies))
+	for _, p := range proxies {
+		if p == nil {
+			continue
+		}
+		if host := ech.HostFor(p.ClashMap()); host != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	ech.Prewarm(ctx, hosts)
+}
 
 func injectECH(entry map[string]any, enabled bool) {
 	if !enabled {

@@ -1,11 +1,29 @@
 package singbox
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
 	echconf "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/ech"
+	node "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 )
+
+// PrewarmECH resolves ECH availability for the entries about to be pushed, in
+// parallel. sbTLS consults the DNS HTTPS record per TLS outbound, so a lazy
+// lookup cost one sequential round trip per distinct hostname.
+func (g *Generator) PrewarmECH(ctx context.Context, proxies []*node.ProxyNode) {
+	hosts := make([]string, 0, len(proxies))
+	for _, p := range proxies {
+		if p == nil {
+			continue
+		}
+		if host := echconf.HostFor(p.ClashMap()); host != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	echconf.Prewarm(ctx, hosts)
+}
 
 // echEnabled controls whether sbTLS injects ECH into TLS outbounds.
 var echEnabled = true

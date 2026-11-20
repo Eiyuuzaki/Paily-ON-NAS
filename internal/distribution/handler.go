@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
-	"time"
 
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
@@ -233,6 +233,19 @@ func (h *Handler) Distribute(
 	// hundreds of nodes, and a per-node query would mean hundreds of round-trips
 	// on the hottest request path.
 	originPrefix := h.originPrefixResolver(c.Request.Context(), selected)
+	// Resolve ECH availability up front, in parallel: the generator consults the
+	// DNS HTTPS record per TLS entry during Push, and doing that one host at a
+	// time put a 72s tail on this endpoint once the pool carried fifty-plus
+	// hostnames. The generator owns the lookup, so it owns the prewarm.
+	if pw, ok := gen.(interface {
+		PrewarmECH(context.Context, []*node.ProxyNode)
+	}); ok {
+		proxies := make([]*node.ProxyNode, 0, len(selected))
+		for _, sn := range selected {
+			proxies = append(proxies, sn.Entry.ProxyNode)
+		}
+		pw.PrewarmECH(c.Request.Context(), proxies)
+	}
 	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
 		name := originPrefix(sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
@@ -563,7 +576,7 @@ type hourlyHealth struct {
 func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]hourlyHealth {
 	hour := time.Now().UTC().Hour()
 	var rows []struct {
-		NodeID    uuid.UUID
+		NodeID     uuid.UUID
 		AliveCount int
 		TotalCount int
 	}
@@ -584,6 +597,7 @@ func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]hourlyHealth
 	}
 	return m
 }
+
 // readDBConfigInt reads a named key from the configs table as an integer.
 func readDBConfigInt(ctx context.Context, db *gorm.DB, key string, defaultVal int) int {
 	var cfg model.Config

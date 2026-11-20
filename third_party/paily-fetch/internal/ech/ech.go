@@ -15,6 +15,7 @@
 package ech
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -47,7 +48,12 @@ const (
 	// reflect a resolver hiccup, so negatives are re-checked far sooner.
 	positiveTTL = 30 * time.Minute
 	negativeTTL = 5 * time.Minute
-	queryTO     = 4 * time.Second
+	queryTO     = 2 * time.Second
+
+	// prewarmWorkers bounds the concurrent resolver queries a subscription build
+	// fires. One sequential query per distinct host put a 72s tail on the
+	// subscription endpoint once the pool grew past fifty hostnames.
+	prewarmWorkers = 8
 )
 
 type cacheEntry struct {
@@ -91,10 +97,68 @@ func HostFor(entry map[string]any) string {
 	return ""
 }
 
+// Prewarm resolves hosts concurrently so a subscription build does not pay one
+// sequential DNS round trip per distinct hostname. Cached entries are skipped,
+// duplicates collapse, and every lookup still lands in the shared cache that
+// HasRecord reads.
+func Prewarm(ctx context.Context, hosts []string) {
+	now := time.Now()
+	seen := make(map[string]struct{}, len(hosts))
+	pending := make([]string, 0, len(hosts))
+
+	mu.Lock()
+	for _, h := range hosts {
+		h = normalise(h)
+		if h == "" {
+			continue
+		}
+		if _, dup := seen[h]; dup {
+			continue
+		}
+		seen[h] = struct{}{}
+		if e, ok := cache[h]; ok && now.Before(e.expires) {
+			continue
+		}
+		pending = append(pending, h)
+	}
+	mu.Unlock()
+
+	if len(pending) == 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, prewarmWorkers)
+	for _, h := range pending {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		default:
+		}
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			HasRecord(host)
+		}(h)
+	}
+	wg.Wait()
+}
+
+// normalise lowercases a host and strips the trailing dot DNS may append.
+func normalise(host string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+}
+
 // HasRecord reports whether host publishes an ECH config. A failed lookup is
 // reported as false: refusing to connect costs more than a plaintext SNI.
 func HasRecord(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	host = normalise(host)
 	if host == "" {
 		return false
 	}
