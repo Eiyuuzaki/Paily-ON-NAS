@@ -20,7 +20,7 @@ func (f *Factory) Name() string { return "clash" }
 
 // NewGenerator creates a new, empty ClashGenerator for one generation request.
 func (f *Factory) NewGenerator() format.FormatGenerator {
-	return &Generator{echEnabled: true}
+	return &Generator{}
 }
 
 // DefaultConfig returns nil because ClashGenerator ignores FormatConfig entirely.

@@ -1,13 +1,12 @@
 package clash
 
 import (
-	"context"
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"sort"
 	"strings"
 
-	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/ech"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/format"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 	"gopkg.in/yaml.v3"
@@ -21,7 +20,6 @@ import (
 type Generator struct {
 	items       []map[string]any
 	regionNames map[string][]string
-	echEnabled  bool // default true; set false via SetECHEnabled to strip ech-opts from output
 }
 
 var _ format.FormatGenerator = (*Generator)(nil)
@@ -35,60 +33,18 @@ func (g *Generator) Push(n *node.ProxyNode, name string) {
 	if name != "" {
 		entry["name"] = name
 	}
-	injectECH(entry, g.echEnabled)
+	if _, native := entry["ech-opts"]; !native {
+		if ech, ok := node.ExplicitECH(entry); ok && len(ech.Config) > 0 {
+			entry["ech-opts"] = map[string]any{"enable": true, "config": base64.StdEncoding.EncodeToString(ech.Config)}
+		}
+	}
 	g.items = append(g.items, entry)
 }
 
-// injectECH adds mihomo ech-opts to TLS proxies so the SNI travels encrypted.
-// GFW runs a periodic SNI blocklist (see AGENTS.md 2026-11-11): once a domain
-// lands on it every plaintext-SNI handshake to any IP gets RST, which is how
-// the whole dpdns.org fleet died. REALITY is excluded - it intentionally
-// presents a plaintext SNI to impersonate a real site, and mihomo rejects the
-// combination. With enable:true and no pinned config mihomo fetches the
-// ECHConfigList from the DNS HTTPS record at connect time.
-// SetECHEnabled toggles whether injectECH adds ech-opts to TLS proxies.
-// Defaults to true; call with false to emit configs without ECH for
-// clients that cannot handle it.
-func (g *Generator) SetECHEnabled(v bool) { g.echEnabled = v }
+// SetECHEnabled is retained for callers that used to control generator-side
+// auto-injection. The generator only renders explicit ECH now.
+func (g *Generator) SetECHEnabled(_ bool) {}
 
-// PrewarmECH resolves ECH availability for the entries about to be pushed, in
-// parallel. Push consults the DNS HTTPS record per TLS entry, so a lazy lookup
-// cost one sequential round trip per distinct hostname and put a 72s tail on
-// the subscription endpoint once the pool carried fifty-plus hosts.
-func (g *Generator) PrewarmECH(ctx context.Context, proxies []*node.ProxyNode) {
-	hosts := make([]string, 0, len(proxies))
-	for _, p := range proxies {
-		if p == nil {
-			continue
-		}
-		if host := ech.HostFor(p.ClashMap()); host != "" {
-			hosts = append(hosts, host)
-		}
-	}
-	ech.Prewarm(ctx, hosts)
-}
-
-func injectECH(entry map[string]any, enabled bool) {
-	if !enabled {
-		return
-	}
-	if entry["tls"] != true {
-		return
-	}
-	if _, isReality := entry["reality-opts"]; isReality {
-		return
-	}
-	if _, already := entry["ech-opts"]; already {
-		return
-	}
-	// Only advertise ECH when the host actually publishes a config: both mihomo
-	// and sing-box refuse the connection when the DNS HTTPS record has none, so
-	// a blind injection turns a working node into a dead one.
-	if !ech.Enabled(entry) {
-		return
-	}
-	entry["ech-opts"] = map[string]any{"enable": true}
-}
 func (g *Generator) PushWithRegion(n *node.ProxyNode, name, region string) {
 	g.Push(n, name)
 	if region == "" || region == "CN" {

@@ -1,32 +1,12 @@
 package singbox
 
 import (
-	"context"
+	"encoding/pem"
 	"strconv"
 	"strings"
 
-	echconf "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/ech"
-	node "github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
+	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 )
-
-// PrewarmECH resolves ECH availability for the entries about to be pushed, in
-// parallel. sbTLS consults the DNS HTTPS record per TLS outbound, so a lazy
-// lookup cost one sequential round trip per distinct hostname.
-func (g *Generator) PrewarmECH(ctx context.Context, proxies []*node.ProxyNode) {
-	hosts := make([]string, 0, len(proxies))
-	for _, p := range proxies {
-		if p == nil {
-			continue
-		}
-		if host := echconf.HostFor(p.ClashMap()); host != "" {
-			hosts = append(hosts, host)
-		}
-	}
-	echconf.Prewarm(ctx, hosts)
-}
-
-// echEnabled controls whether sbTLS injects ECH into TLS outbounds.
-var echEnabled = true
 
 // ─── clash map accessors ──────────────────────────────────────────────────────
 
@@ -107,6 +87,12 @@ func sbTLS(clash map[string]any, sniKey string) map[string]any {
 	if !clashBool(clash, "tls") {
 		return nil
 	}
+	return sbTLSAlways(clash, sniKey)
+}
+
+// sbTLSAlways builds TLS options even when the input omits the tls flag.
+// Used for protocols that always use TLS (Trojan, TUIC, Hysteria, AnyTLS).
+func sbTLSAlways(clash map[string]any, sniKey string) map[string]any {
 	tls := map[string]any{"enabled": true}
 
 	if sni := clashStr(clash, sniKey); sni != "" {
@@ -121,22 +107,13 @@ func sbTLS(clash map[string]any, sniKey string) map[string]any {
 	if fp := clashStr(clash, "client-fingerprint"); fp != "" {
 		tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
 	}
-	// ECH and REALITY are mutually exclusive: REALITY impersonates a real site
-	// by presenting its certificate for a plaintext SNI, while ECH encrypts that
-	// SNI. sing-box rejects the combination outright with
-	// "Reality is conflict with ECH", so REALITY nodes must stay unencrypted.
-	isReality := clashMap(clash, "reality-opts") != nil
-	if !isReality && echEnabled {
-		if pinned := clashStr(clash, "ech"); pinned != "" {
-			// Explicit ECHConfigList supplied by the node payload: pin it.
-			tls["ech"] = map[string]any{"enabled": true, "config": []string{pinned}}
-		} else if echconf.Enabled(clash) {
-			// No pinned config: let sing-box fetch the ECHConfigList from the
-			// DNS HTTPS record at connect time. Only done when that record
-			// actually carries a config - sing-box, like mihomo, refuses the
-			// connection otherwise, so a blind injection kills a working node.
-			tls["ech"] = map[string]any{"enabled": true}
+	if ech, ok := node.ExplicitECH(clash); ok {
+		options := map[string]any{"enabled": ech.Enabled}
+		if len(ech.Config) > 0 {
+			config := pem.EncodeToMemory(&pem.Block{Type: "ECH CONFIGS", Bytes: ech.Config})
+			options["config"] = []string{string(config)}
 		}
+		tls["ech"] = options
 	}
 	// Reality options
 	if ro := clashMap(clash, "reality-opts"); ro != nil {
@@ -152,20 +129,6 @@ func sbTLS(clash map[string]any, sniKey string) map[string]any {
 		}
 	}
 	return tls
-}
-
-// sbTLSAlways is like sbTLS but forces TLS enabled regardless of the "tls" field.
-// Used for protocols that always use TLS (Trojan, TUIC, Hysteria, AnyTLS).
-func sbTLSAlways(clash map[string]any, sniKey string) map[string]any {
-	original := clash["tls"]
-	clash["tls"] = true
-	result := sbTLS(clash, sniKey)
-	if original != nil {
-		clash["tls"] = original
-	} else {
-		delete(clash, "tls")
-	}
-	return result
 }
 
 // sbTransport builds a sing-box transport object from clash network/opts fields.

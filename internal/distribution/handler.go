@@ -214,14 +214,6 @@ func (h *Handler) Distribute(
 	)
 
 	gen := factory.NewGenerator()
-	// ECH toggle: configs table key "ech_enabled", default true.
-	// Set false to strip ech-opts/ech from the output for clients that
-	// cannot handle it (see AGENTS.md 2026-11-11 for compatibility notes).
-	if getter, ok := gen.(interface{ SetECHEnabled(bool) }); ok {
-		if v := readDBConfigInt(c.Request.Context(), h.db, "ech_enabled", 1); v == 0 {
-			getter.SetECHEnabled(false)
-		}
-	}
 	// Entries are emitted first so every "dialer-proxy" target exists in the
 	// output before the exits that reference it (mihomo resolves by name).
 	for i, name := range entryNames {
@@ -233,23 +225,23 @@ func (h *Handler) Distribute(
 	// hundreds of nodes, and a per-node query would mean hundreds of round-trips
 	// on the hottest request path.
 	originPrefix := h.originPrefixResolver(c.Request.Context(), selected)
-	// Resolve ECH availability up front, in parallel: the generator consults the
-	// DNS HTTPS record per TLS entry during Push, and doing that one host at a
-	// time put a 72s tail on this endpoint once the pool carried fifty-plus
-	// hostnames. The generator owns the lookup, so it owns the prewarm.
-	if pw, ok := gen.(interface {
-		PrewarmECH(context.Context, []*node.ProxyNode)
-	}); ok {
-		proxies := make([]*node.ProxyNode, 0, len(selected))
-		for _, sn := range selected {
-			proxies = append(proxies, sn.Entry.ProxyNode)
-		}
-		pw.PrewarmECH(c.Request.Context(), proxies)
+	// ECH is added only for this node's fresh, same-path A/B evidence.
+	// DNS capability alone never enables it; source-supplied ECH is preserved.
+	proofs, err := h.loadECHProofs(c.Request.Context(), selected, tag)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ECH policy lookup failed"})
+		log.Error().Err(err).Msg("distribution: ECH policy lookup failed")
+		return
 	}
 	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
 		name := originPrefix(sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
-		proxy := proxyWithChain(sn.Entry.ProxyNode, chainPlan[i])
+		proxy, err := proxyWithRequiredECH(proxyWithChain(sn.Entry.ProxyNode, chainPlan[i]), proofs[sn.Entry.ID])
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ECH policy render failed"})
+			log.Error().Err(err).Msg("distribution: ECH policy render failed")
+			return
+		}
 		if rg, ok := gen.(interface {
 			PushWithRegion(n *node.ProxyNode, name, region string)
 		}); ok {
@@ -596,17 +588,4 @@ func (h *Handler) loadTimeHealth(ctx context.Context) map[uuid.UUID]hourlyHealth
 		m[r.NodeID] = hourlyHealth{Rate: float64(r.AliveCount) / float64(r.TotalCount), Total: r.TotalCount}
 	}
 	return m
-}
-
-// readDBConfigInt reads a named key from the configs table as an integer.
-func readDBConfigInt(ctx context.Context, db *gorm.DB, key string, defaultVal int) int {
-	var cfg model.Config
-	if err := db.WithContext(ctx).Where("key = ?", key).First(&cfg).Error; err != nil {
-		return defaultVal
-	}
-	v, err := strconv.Atoi(cfg.Value)
-	if err != nil {
-		return defaultVal
-	}
-	return v
 }

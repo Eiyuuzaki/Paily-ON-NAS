@@ -1,10 +1,13 @@
 package links
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 )
 
 // ─── clash map helpers (duplicated from format/singbox for package isolation) ─
@@ -130,8 +133,8 @@ func setTLSParams(q url.Values, clash map[string]any, sniKey string) {
 	if pqv := lStr(clash, "mldsa65-verify"); pqv != "" {
 		q.Set("pqv", pqv)
 	}
-	if ech := lStr(clash, "ech"); ech != "" {
-		q.Set("ech", ech)
+	if ech, ok := node.ExplicitECH(clash); ok && ech.Enabled && len(ech.Config) > 0 {
+		q.Set("ech", base64.StdEncoding.EncodeToString(ech.Config))
 	}
 	if pcs := lStr(clash, "cert-sha"); pcs != "" {
 		q.Set("pcs", pcs)
