@@ -132,6 +132,8 @@ func Discover(ctx context.Context, db *gorm.DB, opt ScanOptions) (found int, pro
 	var mu sync.Mutex
 	now := time.Now()
 	stats := map[string]int{}
+	// HKG landers seen in this sweep, re-measured serially once the storm is over.
+	var survivors []string
 
 	all := make([]string, 0, len(cands)+len(opt.Pinned))
 	all = append(all, opt.Pinned...)
@@ -164,6 +166,7 @@ func Discover(ctx context.Context, db *gorm.DB, opt ScanOptions) (found int, pro
 			stats[colo]++
 			if colo == "HKG" {
 				found++
+				survivors = append(survivors, ip)
 			}
 			mu.Unlock()
 
@@ -179,8 +182,48 @@ SET colo = EXCLUDED.colo,
 		}(ip)
 	}
 	wg.Wait()
+
+	// One measurement is not a ranking. The same address measured 2.70 s and
+	// 0.14 s on consecutive probes, so a single-sample sweep can promote an
+	// address that is usually slow - or one that simply failed once. Re-measure
+	// the HKG survivors serially and keep the median: serial is also the only
+	// honest way to time them, since concurrent probes depress the numbers they
+	// are supposed to compare.
+	verifySurvivors(ctx, db, survivors, 30)
+
 	log.Info().Interface("colos", stats).Int("found_hkg", found).Int("probed", probed).Msg("entryip: discovery done")
 	return found, probed, nil
+}
+
+// verifySurvivors re-measures up to limit candidates serially, three times each,
+// and stores the median. Serial on purpose: concurrent dials compete for the same
+// uplink, which flattens the very differences this is meant to expose.
+func verifySurvivors(ctx context.Context, db *gorm.DB, cands []string, limit int) {
+	if len(cands) == 0 {
+		return
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i] < cands[j] })
+	if limit > 0 && len(cands) > limit {
+		cands = cands[:limit]
+	}
+	for _, ip := range cands {
+		runs := make([]int, 0, 3)
+		for i := 0; i < 3; i++ {
+			rtt, ok := tcpRTT(ctx, ip, 5000)
+			if ok {
+				runs = append(runs, int(rtt))
+			}
+		}
+		// Two of three attempts must succeed before the address is trusted.
+		if len(runs) < 2 {
+			continue
+		}
+		sort.Ints(runs)
+		median := runs[len(runs)/2]
+		_ = db.WithContext(ctx).Exec(
+			"UPDATE entry_ips SET scan_rtt_ms = ?, measured_at = now() WHERE ip = ?",
+			median, ip).Error
+	}
 }
 
 func hashPair(s string, day int) uint32 {
@@ -198,6 +241,14 @@ func representativeIP(cidr string) string {
 	// A plain IP is used as-is (in-use entry addresses).
 	if !strings.Contains(cidr, "/") {
 		if a := net.ParseIP(cidr); a != nil {
+			// A /24's network and broadcast addresses are not usable hosts. They
+			// still answer a trace, so a sweep will happily rank them, but they are
+			// systematically slower than their neighbours (measured 1.15 s median
+			// against 0.14-0.25 s for real hosts on 2026-11-21) and should never
+			// become an entry address.
+			if v4 := a.To4(); v4 != nil && (v4[3] == 0 || v4[3] == 255) {
+				return ""
+			}
 			return a.String()
 		}
 		return ""

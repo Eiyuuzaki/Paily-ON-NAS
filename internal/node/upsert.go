@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -93,6 +94,14 @@ func (u *UpsertService) UpsertFromFetchResult(
 		}
 		proto := strings.ToLower(strField(fields, "type"))
 		srv := strField(fields, "server")
+		// A server in a reserved range cannot be dialled by anyone, ever. Such
+		// entries are junk in the source feed, not candidate nodes: keeping them
+		// spends probe budget forever, pollutes the alive ratio, and cannot be
+		// rescued by any amount of retesting. Domains and ordinary addresses pass
+		// through untouched.
+		if isUnroutableServer(srv) {
+			continue
+		}
 		auth := nodeAuth(proto, fields)
 		compact, _ := json.Marshal(fields)
 		incoming = append(incoming, parsedNode{
@@ -533,4 +542,36 @@ func readCfgInt(db *gorm.DB, key string, def int) int {
 		return def
 	}
 	return v
+}
+
+// isUnroutableServer reports whether a node's server address is structurally
+// undialable: loopback, unspecified, private, link-local or CGNAT space. Only
+// literal IPs are judged; hostnames are left alone because resolving them is the
+// dialer's job and a name may legitimately point anywhere.
+func isUnroutableServer(srv string) bool {
+	s := strings.TrimSpace(srv)
+	if s == "" {
+		return false
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false // hostname or something the parser will reject elsewhere
+	}
+	return ip.IsLoopback() ||
+		ip.IsUnspecified() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() ||
+		isCGNAT(ip)
+}
+
+// isCGNAT reports whether ip falls in 100.64.0.0/10, the carrier-grade NAT range
+// that no public peer can reach.
+func isCGNAT(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
