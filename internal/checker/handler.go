@@ -151,14 +151,34 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		exploreSlots = 0
 	}
 	if err := h.db.WithContext(c.Request.Context()).Raw(`
-		WITH ranked AS (
-		    SELECT id, server,
-		           row_number() OVER (PARTITION BY server
-		               ORDER BY last_direct_check_at NULLS FIRST,
-		                        hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rn,
-		           count(*) OVER (PARTITION BY server) AS total
+		WITH eg AS (
+		    -- Egress identity groups nodes that share one Cloudflare Worker.
+		    -- A CF entry pool publishes hundreds of entry IPs that all dial the
+		    -- same Worker (measured 2026-11-21: 325 alive CF nodes, 321 distinct
+		    -- servers, 2 distinct servernames). Partitioning those by the entry
+		    -- IP treats 321 copies of one backend as independent evidence, so
+		    -- every entry was probed every round. Grouping by servername+region
+		    -- collapses them to a handful of representatives (325 -> 12) while
+		    -- leaving every non-CF node on its own server key, unchanged.
+		    -- Decoded via jsonb->>'name', never a substring test on raw: the entry
+		    -- swap re-serialises the JSON with spaces (see egressIdentity).
+		    SELECT id, server, region, last_direct_check_at, score,
+		           CASE
+		               WHEN raw IS NOT NULL AND raw LIKE '{%' AND raw::jsonb->>'name' LIKE 'CF-%'
+		               THEN coalesce(nullif(raw::jsonb->>'servername',''),
+		                             nullif(raw::jsonb->>'sni',''),
+		                             server) || '|' || coalesce(region,'')
+		               ELSE server
+		           END AS egress_key
 		    FROM nodes
 		    WHERE archived_at IS NULL AND alive = true
+		), ranked AS (
+		    SELECT id, egress_key,
+		           row_number() OVER (PARTITION BY egress_key
+		               ORDER BY last_direct_check_at NULLS FIRST,
+		                        hashtext(id::text || floor(extract(epoch from now()) / 7200)::text)) AS rn,
+		           count(*) OVER (PARTITION BY egress_key) AS total
+		    FROM eg
 		), reps AS (
 		    SELECT id FROM ranked WHERE total <= ? OR rn <= ?
 		    UNION
@@ -588,12 +608,26 @@ var unsupportedAIRegions = []string{"CN", "HK", "MO", "RU", "IR", "KP", "CU", "S
 // gateAICapabilities clears access-chatgpt for nodes whose measured exit region
 // is not served by OpenAI. Runs after region updates so it sees the final value.
 func (h *Handler) gateAICapabilities(ctx context.Context) {
-	if err := h.db.WithContext(ctx).Exec(`
+	// NOTE: GORM Exec does NOT expand a []string into an IN list the way Where
+	// does; "= ANY(?)" reached Postgres as ANY('CN','HK') and failed with
+	// "syntax error at or near ","" on every checker round (2026-11-21), so the
+	// gate never ran and nodes in OpenAI-blocked regions kept a stale
+	// access-chatgpt=true. Build the placeholder list explicitly instead.
+	if len(unsupportedAIRegions) == 0 {
+		return
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unsupportedAIRegions)), ",")
+	args := make([]any, 0, len(unsupportedAIRegions))
+	for _, region := range unsupportedAIRegions {
+		args = append(args, region)
+	}
+	query := `
 UPDATE node_deep_checks d
 SET streaming_result = (d.streaming_result::jsonb || '{"access-chatgpt": false}'::jsonb)::text
 WHERE d.checked_at > now() - interval '3 days'
   AND d.streaming_result::jsonb->>'access-chatgpt' = 'true'
-  AND d.node_id IN (SELECT id FROM nodes WHERE region = ANY(?))`, unsupportedAIRegions).Error; err != nil {
+  AND d.node_id IN (SELECT id FROM nodes WHERE region IN (` + placeholders + `))`
+	if err := h.db.WithContext(ctx).Exec(query, args...).Error; err != nil {
 		log.Warn().Err(err).Msg("checker: ai capability gate failed")
 	}
 }
