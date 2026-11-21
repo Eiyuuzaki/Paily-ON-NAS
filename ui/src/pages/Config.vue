@@ -30,7 +30,7 @@ const KEY_LABELS: Record<string, string> = {
   min_fetch_samples: 'fetch dead 触发最少记录数',
   min_check_samples: 'node dead 触发最少初筛数',
   cleanup_interval_minutes: '历史清理周期（分钟）',
-  default_sponsor_text: '默认 Sponsor 文字',
+  default_sponsor_text: '默认出口标识（无匹配时追加）',
   node_name_template: '节点命名模板（expr-lang）',
   fetch_interval_minutes: '抓取间隔（分钟）',
   filename_clash: 'Clash 配置文件名',

@@ -35,7 +35,7 @@ const nameFields = [
   { name: 'node.alive', type: 'bool', desc: '是否存活' },
   { name: 'node.source_priority', type: 'int', desc: '来源优先级（0 公益 / 1 机场 / 2 最高）' },
   { name: 'node.streaming', type: 'map[string]bool', desc: '解锁标志，如 node.streaming["netflix"]' },
-  { name: 'node.sponsor', type: 'string', desc: '赞助商文本' },
+  { name: 'node.sponsor', type: 'string', desc: '出口标识文本' },
   { name: 'unlock_flags', type: 'string', desc: '解锁标志汇总字符串' },
   { name: 'filter_mode', type: 'string', desc: '过滤模式（select / mark）' },
 ]

@@ -65,7 +65,7 @@ const menuItems = [
   { path: '/dashboard', title: '仪表盘', icon: 'mdi-view-dashboard-outline' },
   { path: '/nodes', title: '节点管理', icon: 'mdi-server-network' },
   { path: '/sources', title: '来源管理', icon: 'mdi-link-variant' },
-  { path: '/sponsors', title: '赞助商管理', icon: 'mdi-star-outline' },
+  { path: '/sponsors', title: '自建出口', icon: 'mdi-star-outline' },
   { path: '/filter', title: '过滤测试台', icon: 'mdi-filter-outline' },
   { path: '/config', title: '运行时配置', icon: 'mdi-cog-outline' },
   { path: '/format-configs', title: '格式配置', icon: 'mdi-file-code-outline' },

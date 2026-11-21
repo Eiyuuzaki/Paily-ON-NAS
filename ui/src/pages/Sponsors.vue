@@ -46,7 +46,7 @@ async function fetchSponsors() {
 }
 
 async function handleDelete(row: SponsorSummary) {
-  if (!confirm(`确定删除赞助商 "${row.name}"？`)) return
+  if (!confirm(`确定删除自建出口 "${row.name}"？`)) return
   await deleteSponsor(row.id)
   notify('已删除')
   fetchSponsors()
@@ -106,7 +106,7 @@ async function handlePreview() {
 
 const headers = [
   { title: '名称', key: 'name', minWidth: 130 },
-  { title: '文本', key: 'text', minWidth: 120 },
+  { title: '出口标识', key: 'text', minWidth: 120 },
   { title: '过滤表达式', key: 'filter_expr', minWidth: 220, sortable: false },
   { title: '优先级', key: 'priority', minWidth: 100 },
   { title: '操作', key: 'actions', minWidth: 120, sortable: false, align: 'end' as const },
@@ -127,10 +127,10 @@ onMounted(fetchSponsors)
   <div>
     <div class="page-head">
       <div>
-        <h1 class="page-title">赞助商管理</h1>
-        <p class="page-sub">按过滤表达式把赞助商文本附加到匹配的节点名称上</p>
+        <h1 class="page-title">自建出口</h1>
+        <p class="page-sub">按过滤表达式把出口标识附加到匹配的节点名称上</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">新建赞助商</v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">新建自建出口</v-btn>
     </div>
 
     <v-card flat rounded="xl" class="bg-surface-container-low">
@@ -146,7 +146,7 @@ onMounted(fetchSponsors)
           <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error" title="删除" @click="handleDelete(item)" />
         </template>
         <template #no-data>
-          <div class="py-8 text-center text-disabled">暂无赞助商</div>
+          <div class="py-8 text-center text-disabled">暂无自建出口</div>
         </template>
       </v-data-table>
 
@@ -163,10 +163,10 @@ onMounted(fetchSponsors)
     <!-- 新建 / 编辑 -->
     <v-dialog v-model="dialogVisible" max-width="640" scrollable>
       <v-card flat rounded="xl" class="bg-surface-container-low">
-        <v-card-title>{{ isEditing ? '编辑赞助商' : '新建赞助商' }}</v-card-title>
+        <v-card-title>{{ isEditing ? '编辑自建出口' : '新建自建出口' }}</v-card-title>
         <v-card-text>
           <v-text-field v-model="form.name" label="名称" class="mb-2" />
-          <v-text-field v-model="form.text" label="文本（附加到节点名）" class="mb-2" />
+          <v-text-field v-model="form.text" label="出口标识（附加到节点名）" class="mb-2" />
           <v-text-field v-model.number="form.priority" type="number" label="优先级" class="mb-2" />
           <div class="text-subtitle-2 mb-2">过滤表达式</div>
           <ExprEditor v-model="form.filter_expr" placeholder="输入 expr-lang 过滤表达式…" />
