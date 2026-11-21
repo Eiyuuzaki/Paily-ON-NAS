@@ -80,12 +80,14 @@ paily-on-nas/
 二进制是**交叉编译**的，直接用 Release 里对应架构的版本即可，不需要自己重新编译。
 
 ```bash
-# ARM64（主流 NAS）
-docker compose --profile arm64 up -d
-
-# 或者手动指定
+# 四个基础服务（core / fetch / check / postgres）
 docker compose up -d
+
+# 再加上 Web 管理界面（compose 里唯一的 profile 就是 ui）
+docker compose --profile ui up -d
 ```
+
+> 不存在 `--profile arm64`：镜像本身已经是 arm64 二进制，架构不是 compose profile 的维度。
 
 ---
 

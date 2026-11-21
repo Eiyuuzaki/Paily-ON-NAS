@@ -1,6 +1,6 @@
 # 配置与 API
 
-本文档介绍 Paily 主服务的配置层次、可调参数、筛选引擎、节点命名与 sponsor text，以及接口权限划分。
+本文档介绍 Paily 主服务的配置层次、可调参数、筛选引擎、节点命名与出口标识，以及接口权限划分。
 
 ## 配置层次
 
@@ -29,6 +29,7 @@ Paily 主服务的配置分为两层：
 | `auth.admin_password` | `PAILY_AUTH_ADMIN_PASSWORD` | 管理员密码或 bcrypt 哈希。 |
 | `auth.service_secret` | `PAILY_AUTH_SERVICE_SECRET` | Paily Fetch、Paily 测活后端和源提交器使用的服务密钥。 |
 | `auth.jwt_secret` | `PAILY_AUTH_JWT_SECRET` | JWT HMAC 密钥。 |
+| `auth.subscribe_token` | `PAILY_AUTH_SUBSCRIBE_TOKEN` | `/clash` `/singbox` `/base64` 的订阅 token 初始值；运行期以 `configs.subscribe_token` 为准（可热改）。留空 = 订阅不设防。 |
 | `checkers[].tag` | 配置文件 | 测活后端 tag。 |
 | `checkers[].secret` | 配置文件 | 该测活后端专用密钥。 |
 | `checkers[].default_preset` | 配置文件 | 该 tag 订阅未指定 preset 时的默认预设。 |
@@ -38,28 +39,59 @@ Paily 主服务的配置分为两层：
 
 动态配置可在管理界面的「运行时配置」页面修改，首次启动时会写入缺失的键。
 
+> 以下清单与代码里的 `internal/db/model/config.go` → `DefaultConfigs` 一一对应，
+> 新增配置键时请同步本表。
+
 | 分类 | 键 | 默认值 | 说明 |
 | --- | --- | ---: | --- |
 | 分发 | `max_distribute` | `200` | 单次订阅最多输出的节点数。 |
 | 分发 | `node_distribute_filter` | 空 | 命中表达式的节点不进入分发缓存。 |
+| 分发 | `cf_per_worker_max` | `4` | 每地区、每个 CF Worker 最多出的入口数。 |
+| 分发 | `region_other_max` | `16` | 每地区非 CF 安全节点上限。 |
+| 分发 | `dist_per_path_max` | `2` | 同一路径最多出的节点数，防一台机器用多端口刷满配额。 |
+| 分发 | `dist_allow_paid_selfsigned` | `1` | 允许付费/最高来源使用自签证书。 |
+| 分发 | `dist_selfsigned_fallback` | `short` | 自签兜底：`short` 补满 / `empty` 仅空地区 / `none` 不用。 |
+| 分发 | `dist_allow_plaintext` | `0` | 允许明文 HTTP/SOCKS 进订阅（危险，默认关）。 |
+| 分发 | `dist_require_ipv4` | `0` | 只出有 A 记录的端点（面向纯 v4 客户端）。 |
+| 分发 | `distribute_per_egress_max` | — | **旧参数**，已被 `cf_per_worker_max` + `dist_per_path_max` 取代，界面隐藏。 |
+| 分发 | `priority_ratio` | — | **旧参数**，读取后即丢弃，不再影响选点，界面隐藏。 |
+| 分发 | `ech_enabled` | `1` | 允许按节点实测证据添加 ECH。`0` 只停用自动添加，保留源节点自带配置。 |
+| 分发 | `ech_checker_tag` | `local` | 未指定订阅 `tag` 时，采用此测点的 ECH 对照证据；指定 `tag` 时使用对应测点。仅使用同节点、同配置、近 3 小时的最新实测结果。 |
 | 存活 | `node_alive_check_window_minutes` | `240` | 最新初筛的存活窗口，单位分钟。 |
+| 存活 | `check_dead_proof_rounds` | `4` | 未证明节点需连续失败多少轮才判死。 |
+| 存活 | `check_dead_sweep_slots` | `12` | 判死清扫节奏（每 N 轮扫一次，默认约一天）。 |
+| 存活 | `check_dead_grace_minutes` | `360` | 判死后的宽限期，期间保持高频重测。 |
+| 存活 | `check_rep_per_server` | `2` | 同一入口每轮探测的代表数（`0` = 全量）。 |
+| 存活 | `check_rep_min_group` | `3` | 活节点数不超过该值的小组不抽代表，全部实探。 |
 | 评分 | `score_decay_alpha` | `0.7` | 评分的时间衰减系数。 |
 | 评分 | `score_weight_latency` | `0.7` | 延迟权重。 |
 | 评分 | `score_weight_stability` | `0.3` | 稳定性权重。 |
 | 评分 | `score_weight_speed` | `0.55` | 有测速数据时的速度混合权重。 |
 | 评分 | `score_latency_curve_k` | `0.3` | 延迟曲线参数。 |
 | 评分 | `score_jitter_linear_threshold_ms` | `200` | 抖动分段阈值，单位毫秒。 |
-| 命名 | `grade_a_min` | `0.75` | A 等级下限。 |
-| 命名 | `grade_b_min` | `0.50` | B 等级下限。 |
-| 命名 | `grade_c_min` | `0.25` | C 等级下限，低于此值为 D。 |
+| 评分 | `score_max_latency_ms` | `1500` | 延迟归一化锚点；改测量路径后必须同步。 |
+| 评分 | `score_max_jitter_ms` | `400` | 抖动归一化锚点。 |
+| 评分 | `score_history_since` | — | 评分只取该 RFC3339 时间之后的复筛记录。 |
+| 评分 | `grade_jitter_weight` | `2.0` | 抖动向等效延迟的折算权重。 |
+| 评分 | `grade_fail_cost_ms` | `3000` | 失败占比的等效延迟惩罚（毫秒）。 |
+| 评分 | `grade_s_ms` | `200` | S 级上限（等效延迟，毫秒）。 |
+| 评分 | `grade_a_ms` | `400` | A 级上限。 |
+| 评分 | `grade_b_ms` | `600` | B 级上限。 |
+| 评分 | `grade_c_ms` | `1000` | C 级上限，超过为 D。 |
+| 命名 | `grade_s_min` / `_a_min` / `_b_min` / `_c_min` | `0.85` / `0.78` / `0.60` / `0.35` | **遗留**：按分数划级的旧阈值，已不参与分级，界面隐藏。 |
+| 命名 | `node_name_template` | 见代码 | 节点命名表达式模板。 |
+| 命名 | `default_sponsor_text` | 空 | 没有出口标识规则命中时追加的文案。 |
 | 历史 | `fetch_dead_window_days` | `7` | 抓取失效判定窗口，单位天。 |
 | 历史 | `node_dead_window_days` | `4` | 节点测活失效判定窗口，单位天。 |
 | 历史 | `fetch_history_window_days` | `7` | 抓取历史基础保留天数。 |
 | 历史 | `check_run_history_days` | `7` | 测活历史基础保留天数。 |
 | 历史 | `cleanup_interval_minutes` | `30` | 清理间隔，单位分钟。 |
+| 历史 | `profile_update_interval` | `24` | 节点画像重建间隔，单位小时。 |
 | 池子 | `ingress_max_per_endpoint` | `3` | 同一 `server:port` 最多准入的新节点数。 |
 | 池子 | `ingress_zero_yield_quota` | `20` | 零产出协议（ss/ssr/hysteria2/socks5/tuic/anytls/wireguard）各自的池内上限。 |
-| 池子 | `node_never_alive_retention_days` | `3` | 从未存活节点的归档保留天数，`0` 关闭归档。 |
+| 池子 | `ingress_max_new_per_source` | `40` | 优先级 0 来源每轮可引入的新节点数（更高优先级来源不限）。 |
+| 池子 | `node_never_alive_retention_days` | `3` | 从未存活节点的归档保留天数，`0` 关闭。 |
+| 池子 | `node_dead_retention_days` | `7` | 曾活后死节点的保留天数，`0` 关闭。 |
 | 文件名 | `filename_clash` | `Paily Connect.yaml` | Clash 下载文件名。 |
 | 文件名 | `filename_singbox` | `Paily Connect.json` | Sing-box 下载文件名。 |
 | 文件名 | `filename_base64` | `Paily Connect.txt` | Base64 下载文件名。 |
@@ -68,7 +100,7 @@ Paily 主服务的配置分为两层：
 
 ## 筛选引擎
 
-筛选引擎基于 [expr-lang](https://expr-lang.org/)，用于管理端的节点与来源搜索、表达式预览、分发缓存过滤和 sponsor text 匹配。布尔表达式应返回 `true` 或 `false`。
+筛选引擎基于 [expr-lang](https://expr-lang.org/)，用于管理端的节点与来源搜索、表达式预览、分发缓存过滤和出口标识匹配。布尔表达式应返回 `true` 或 `false`。
 
 ```text
 # 排除未知地区或低评分节点
@@ -91,17 +123,17 @@ SourceIDs, Sources, RawConfig, Streaming
 ID, Identifier, Info, Status, Type
 ```
 
-## 节点命名与 Sponsor
+## 节点命名与出口标识
 
 `node_name_template` 是返回字符串的表达式模板，默认输出形如：
 
 ```text
-[解锁服务] 等级 - 国旗 地区 序号 Sponsor 文案
+[解锁服务] 等级 - 国旗 地区 序号 出口标识
 ```
 
 序号按地区内评分排序后单独编号，例如 `hk01`、`hk02`、`tw01`。解锁标记仅在指定了流媒体筛选且满足显示条件时出现。
 
-Sponsor 依据 `priority` 从小到大依次匹配，后匹配项覆盖前项，因此数值更大的 priority 最终获胜。没有任何匹配时使用 `default_sponsor_text`。
+出口标识规则依据 `priority` 从小到大依次匹配，后匹配项覆盖前项，因此数值更大的 priority 最终获胜。没有任何匹配时使用 `default_sponsor_text`。
 
 ## 格式配置
 

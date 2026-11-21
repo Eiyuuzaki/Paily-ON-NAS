@@ -156,15 +156,16 @@ docker compose up -d
 **订阅地址**
 
 ```
-http://<NAS-IP>:21380/clash      Clash / mihomo
-http://<NAS-IP>:21380/singbox    Sing-box
-http://<NAS-IP>:21380/base64     通用 Base64
+http://<NAS-IP>:21380/clash?token=<token>      Clash / mihomo
+http://<NAS-IP>:21380/singbox?token=<token>    Sing-box
+http://<NAS-IP>:21380/base64?token=<token>     通用 Base64
 ```
 
 可选参数：`?tag=local`（测活视角）。地区策略已由「分区分源配额」取代，`?preset=` 参数保留但不再改变选点。
 
-> ⚠️ **这些地址不需要任何认证**，任何能访问到端口的人都能拿到全部订阅。
-> 请只在内网使用，**不要做公网端口映射**。
+> ⚠️ **订阅需要订阅 token**（`?token=` 或 `Authorization: Bearer`），token 存 `configs.subscribe_token`，
+> 可在管理界面轮换。**该键为空时不设防**，core 启动会打印 warning —— 此时任何能访问到端口的人
+> 都能拿到全部订阅。请只在内网使用，**不要做公网端口映射**。
 
 **管理界面**（可选）
 
