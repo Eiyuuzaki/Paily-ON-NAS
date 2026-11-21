@@ -164,7 +164,17 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		    -- swap re-serialises the JSON with spaces (see egressIdentity).
 		    SELECT id, server, region, last_direct_check_at, score,
 		           CASE
-		               WHEN raw IS NOT NULL AND raw LIKE '{%' AND raw::jsonb->>'name' LIKE 'CF-%'
+		               -- Judge by "has a real SNI and the dial target is an IP", never by
+		               -- the node's name prefix: one Worker is published under several
+		               -- naming schemes (CF-US-58, HKG-013, ...), and keying on 'CF-%'
+		               -- left 149 of 439 entries as their own egress key, so all of them
+		               -- were probed every round. Measured 2026-11-22: all 439 carry
+		               -- servername=lencf.dpdns.org across distinct entry IPs, i.e. one
+		               -- Worker and one quota. Matches distribution.egressIdentity(),
+		               -- which has always used the SNI+IP test.
+		               WHEN coalesce(nullif(raw::jsonb->>'servername',''),
+		                             nullif(raw::jsonb->>'sni',''), '') <> ''
+		                    AND (server ~ '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' OR server LIKE '%:%')
 		               THEN coalesce(nullif(raw::jsonb->>'servername',''),
 		                             nullif(raw::jsonb->>'sni',''),
 		                             server) || '|' || coalesce(region,'')
