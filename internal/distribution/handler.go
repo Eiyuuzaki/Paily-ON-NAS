@@ -251,6 +251,14 @@ func (h *Handler) Distribute(
 		}
 	}
 
+	// ── 3b. Optional standalone WARP exit ─────────────────────────────────────
+	// Off by default. Unlike pool nodes it is never checked, scored or deduped:
+	// it exists only so a subscription still has a working exit when every
+	// measured node is gone. See warp.go for the measured limits.
+	if configInt(h.db, "warp_enabled", 0) != 0 {
+		pushWARP(h.db, gen)
+	}
+
 	// ── 4. Load format config and generate output ─────────────────────────────
 	fmtConfig := loadFormatConfig(h.db, string(formatName), factory)
 
