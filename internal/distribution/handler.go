@@ -224,7 +224,7 @@ func (h *Handler) Distribute(
 	// Resolve source origins once for the whole batch: a subscription may emit
 	// hundreds of nodes, and a per-node query would mean hundreds of round-trips
 	// on the hottest request path.
-	originPrefix := h.originPrefixResolver(c.Request.Context(), selected)
+	originPrefix, isWorkerEntry := h.originPrefixResolver(c.Request.Context(), selected)
 	// ECH is added only for this node's fresh, same-path A/B evidence.
 	// DNS capability alone never enables it; source-supplied ECH is preserved.
 	proofs, err := h.loadECHProofs(c.Request.Context(), selected, tag)
@@ -233,6 +233,11 @@ func (h *Handler) Distribute(
 		log.Error().Err(err).Msg("distribution: ECH policy lookup failed")
 		return
 	}
+	// Port redundancy: one extra dialable port per CF entry, no probe cost.
+	portVariants := cfPortVariants(h.db)
+	rg, hasRegion := gen.(interface {
+		PushWithRegion(n *node.ProxyNode, name, region string)
+	})
 	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
 		name := originPrefix(sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
@@ -242,12 +247,31 @@ func (h *Handler) Distribute(
 			log.Error().Err(err).Msg("distribution: ECH policy render failed")
 			return
 		}
-		if rg, ok := gen.(interface {
-			PushWithRegion(n *node.ProxyNode, name, region string)
-		}); ok {
+		if hasRegion {
 			rg.PushWithRegion(proxy, name, sn.Entry.Region)
 		} else {
 			gen.Push(proxy, name)
+		}
+		// Same Worker, another TLS port: a port-level block on 443 then
+		// costs one member of the group instead of the whole pool.
+		curPort, isCF := cfEntryPort(sn.Entry, isWorkerEntry(sn.Entry))
+		if !isCF {
+			continue
+		}
+		for _, altPort := range portVariants {
+			if altPort == curPort {
+				continue
+			}
+			variant := withPort(proxy, altPort)
+			if variant == nil {
+				continue
+			}
+			variantName := name + " (" + strconv.Itoa(altPort) + ")"
+			if hasRegion {
+				rg.PushWithRegion(variant, variantName, sn.Entry.Region)
+			} else {
+				gen.Push(variant, variantName)
+			}
 		}
 	}
 
@@ -308,7 +332,12 @@ var originRank = map[string]int{
 // single response can contain hundreds of nodes, so the previous
 // query-per-node implementation multiplied one request into hundreds of
 // round-trips.
-func (h *Handler) originPrefixResolver(ctx context.Context, selected []SelectedNode) func(*cache.NodeCacheEntry) string {
+//
+// The second return value answers "is this a self-built entry?" — that is the
+// only shape whose backend is a Worker the project operates, and the only shape
+// where a second Cloudflare port is known to exist. It is resolved here, from
+// the same rows, so callers never pay a second query.
+func (h *Handler) originPrefixResolver(ctx context.Context, selected []SelectedNode) (func(*cache.NodeCacheEntry) string, func(*cache.NodeCacheEntry) bool) {
 	seen := make(map[string]struct{}, 64)
 	ids := make([]string, 0, 64)
 	for _, sn := range selected {
@@ -340,7 +369,24 @@ func (h *Handler) originPrefixResolver(ctx context.Context, selected []SelectedN
 		}
 	}
 
-	return func(entry *cache.NodeCacheEntry) string {
+	// bestOrigin reports the highest-ranked origin across an entry's sources,
+	// plus whether any source is the CF apex subscription.
+	bestOrigin := func(entry *cache.NodeCacheEntry) (string, bool) {
+		if entry == nil || len(entry.SourceIDs) == 0 {
+			return "", false
+		}
+		best, bestRank := "", -1
+		for _, id := range entry.SourceIDs {
+			if isApex[id] {
+				return "self-built", true
+			}
+			if r := originRank[origin[id]]; r > bestRank {
+				bestRank, best = r, origin[id]
+			}
+		}
+		return best, false
+	}
+	prefix := func(entry *cache.NodeCacheEntry) string {
 		if len(entry.SourceIDs) == 0 {
 			return "[免费]"
 		}
@@ -372,7 +418,13 @@ func (h *Handler) originPrefixResolver(ctx context.Context, selected []SelectedN
 		}
 		return "[免费]"
 	}
+	isWorkerEntry := func(entry *cache.NodeCacheEntry) bool {
+		best, _ := bestOrigin(entry)
+		return best == "self-built"
+	}
+	return prefix, isWorkerEntry
 }
+
 func (h *Handler) subscriptionUserinfo() string {
 	var agg struct {
 		Upload   int64
