@@ -14,15 +14,23 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// RebuildTrigger asks the distribution snapshot to reload. Nodes upserted by
+// the ingest path stay invisible to every subscription until it runs, so the
+// ingest path requests it instead of waiting for the next checker cycle.
+type RebuildTrigger interface {
+	TriggerRebuild(context.Context)
+}
+
 // Handler handles fetcher-facing HTTP endpoints (service-auth protected).
 type Handler struct {
 	sourceSvc  *source.Service
 	upsertPort NodeUpsertPort
+	rebuild    RebuildTrigger
 }
 
 // NewHandler creates a new fetcher handler.
-func NewHandler(svc *source.Service, upsert NodeUpsertPort) *Handler {
-	return &Handler{sourceSvc: svc, upsertPort: upsert}
+func NewHandler(svc *source.Service, upsert NodeUpsertPort, rebuild RebuildTrigger) *Handler {
+	return &Handler{sourceSvc: svc, upsertPort: upsert, rebuild: rebuild}
 }
 
 // GetSources handles GET /api/v1/fetch/sources.
@@ -122,6 +130,12 @@ func (h *Handler) PostResults(c *gin.Context) {
 						Msg("source marked dead by fetch dead logic")
 				}
 			}
+		}
+		// Every upsert above changed what should be distributed. Rebuild once
+		// for the whole batch (the trigger debounces internally) so new nodes
+		// reach subscriptions now, not at the next 2-hour checker cycle.
+		if h.rebuild != nil {
+			h.rebuild.TriggerRebuild(ctx)
 		}
 		log.Info().Int("count", len(results)).Dur("elapsed", time.Since(start)).Msg("fetcher: processing results finished")
 	}(req.Results)

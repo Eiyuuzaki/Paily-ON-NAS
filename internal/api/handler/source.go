@@ -185,6 +185,12 @@ func (h *SourceHandler) Update(c *gin.Context, id openapi_types.UUID) {
 		return
 	}
 	alive := aliveCounts[id]
+	// A changed source changes what is distributed. Without this, the new
+	// content only reaches the snapshot at the next 10-minute rebuild tick,
+	// which is exactly the "distributed immediately" promise Delete keeps.
+	if h.cache != nil {
+		h.cache.TriggerRebuild(c.Request.Context())
+	}
 	c.JSON(http.StatusOK, sourceToDetail(src, &alive))
 }
 

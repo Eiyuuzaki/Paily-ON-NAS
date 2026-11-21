@@ -117,6 +117,11 @@ func (c *AliveCache) rebuildLoop() {
 		}
 		if err := Rebuild(context.Background(), c.db, c.cfg, c); err != nil {
 			log.Warn().Err(err).Msg("cache: rebuild failed")
+		} else {
+			// One line per rebuild: the only way to tell an ingest-triggered
+			// reload apart from the 2-hour checker cycle when diagnosing why a
+			// new node is missing from subscriptions.
+			log.Info().Msg("cache: rebuilt")
 		}
 	}
 }

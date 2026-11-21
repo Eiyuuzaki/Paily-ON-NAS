@@ -141,9 +141,11 @@ func main() {
 	nodeSvc := node.NewService(database)
 	upsertSvc := node.NewUpsertService(database)
 	sourceSvc := source.NewService(database, nodeSvc)
-	fetchHandler := fetcher.NewHandler(sourceSvc, upsertSvc)
 	scoringSvc := scoring.NewService(database)
+	// aliveCache must exist before the fetcher handler: the ingest path asks it
+	// to reload so freshly upserted nodes reach subscriptions immediately.
 	aliveCache := cache.New(database, cfg)
+	fetchHandler := fetcher.NewHandler(sourceSvc, upsertSvc, aliveCache)
 	checkerHandler := checker.NewHandler(database, sourceSvc, nodeSvc, scoringSvc, aliveCache)
 
 	// Start periodic history cleanup goroutine.
