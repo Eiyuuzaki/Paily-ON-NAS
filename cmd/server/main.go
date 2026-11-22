@@ -236,6 +236,10 @@ func main() {
 				return
 			}
 			subMW(c)
+		case p == "/api/v1/check/urgent" && m == http.MethodPost:
+			// Operator-triggered recheck: the panel holds an admin JWT, scripts
+			// hold the service secret. The checker itself never calls this.
+			sourceCreateMW(c)
 		case strings.HasPrefix(p, "/api/v1/check/"):
 			// checker-specific: authenticates via checker secret and injects checker_tag
 			middleware.CheckerTagMiddleware(cfg)(c)
@@ -292,6 +296,10 @@ func main() {
 		ea.PUT("/host", eaHandler.SetHost)
 		ea.POST("/test", eaHandler.Test)
 	}
+	// Operator-facing recheck queue. Registered before RegisterHandlers so the
+	// global auth middleware sees these paths (see the switch above).
+	engine.POST("/api/v1/check/urgent", checkerHandler.UrgentEnqueue)
+	engine.GET("/api/v1/check/pending", checkerHandler.UrgentPending)
 	api.RegisterHandlers(engine, srv)
 
 	// Health probe — always returns 200, no auth required.

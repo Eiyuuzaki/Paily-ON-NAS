@@ -14,6 +14,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/middleware"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/checkqueue"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/entryip"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
@@ -97,6 +98,18 @@ func readConfigInt(db *gorm.DB, key string, defaultVal int) int {
 // Tunables live in the configs table; deleting the rows restores defaults.
 func (h *Handler) GetNodes(c *gin.Context) {
 	proofRounds := readConfigInt(h.db, "check_dead_proof_rounds", 4)
+	// Probation window for dead nodes. "Probe every node with fewer than
+	// proofRounds checks" was meant to give a new node a fair chance, but it
+	// never expired: measured 2026-11-22, 220 of 1,374 dead nodes sat under
+	// proofRounds forever and were re-probed every round, each costing a full
+	// 6-second timeout — that is where half of the 18.8-minute initial phase
+	// went. Bounding the rule by age keeps the intent (a node that just entered
+	// the pool is checked until it has evidence) and drops the cost (a node that
+	// failed months ago waits for its rotation turn instead).
+	proofHours := readConfigInt(h.db, "check_dead_probation_hours", 24)
+	if proofHours < 0 {
+		proofHours = 0
+	}
 	// Dead-node probing is governed by rotation, not by a grace window: see the
 	// dead_due CTE below. A node is re-probed on a cadence that stretches with
 	// the time since its last success, so a fleet that has stopped working (a
@@ -149,6 +162,18 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	exploreSlots := readConfigInt(h.db, "check_explore_slots", 6)
 	if exploreSlots < 0 {
 		exploreSlots = 0
+	}
+	// A round is either the scheduled rotation or the operator queue, never a mix.
+	//
+	// Adding queued ids to the rotation looked convenient and measured badly
+	// (2026-11-22): a one-node enqueue produced a 484-node round, so the operator
+	// still paid the full sweep for one answer. Queued work instead runs in its
+	// own small round during the idle stretch after the scheduled one — the
+	// rotation occupies the first part of each two-hour window and leaves the
+	// rest empty.
+	if c.Query("mode") == "urgent" {
+		h.getUrgentNodes(c)
+		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).Raw(`
 		WITH eg AS (
@@ -204,6 +229,7 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		), dead_stats AS (
 		    SELECT n.id,
 		           n.cf_account_id,
+		           n.created_at,
 		           count(c.*) AS checks,
 		           max(c.checked_at) FILTER (WHERE c.latency_ms >= 0) AS last_ok
 		    FROM nodes n
@@ -218,7 +244,10 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		    -- window closed. A quota-exhausted CF fleet would burn ~84 rounds each
 		    -- that way; at the 12-slot tier it costs one probe per day instead.
 		    SELECT id FROM dead_stats
-		    WHERE checks < ?
+		    -- Probation only for entries that are actually new. Without the age
+		    -- bound the clause below never expires and every long-dead node with
+		    -- few samples is probed every round forever.
+		    WHERE (checks < ? AND created_at > now() - make_interval(hours => ?))
 		       -- An account whose quota just reset is retested in full, once.
 		       -- Recovery must not depend on the rotation tier: a fleet that sat
 		       -- out an outage has no recent success to schedule on, so waiting
@@ -253,12 +282,14 @@ func (h *Handler) GetNodes(c *gin.Context) {
 		        AND strpos(',' || q.value || ',', ',' || n.cf_account_id::text || ',') > 0
 		  ))
 		  AND (
-		       (n.alive = false AND (
-		            (SELECT count(*) FROM node_initial_checks WHERE node_id = n.id) < ?
-		            OR n.id IN (SELECT id FROM dead_due)
-		       ))
+		       -- One rule for dead nodes, in dead_due. A second "fewer than
+		       -- proofRounds checks" test used to sit here and, being unbounded by
+		       -- age, re-probed every long-dead node every round: measured
+		       -- 2026-11-22, 220 nodes never escaped it and dominated the
+		       -- initial phase. Two rules for one decision is how that happened.
+		       (n.alive = false AND n.id IN (SELECT id FROM dead_due))
 		       OR (n.alive = true AND n.id IN (SELECT id FROM reps))
-		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, proofRounds).Scan(&nodes).Error; err != nil {
+		  )`, repMinGroup, repPerServer, exploreSlots, proofRounds, proofHours).Scan(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -294,6 +325,179 @@ func (h *Handler) GetNodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"nodes": entries})
+}
+
+// getUrgentNodes serves the operator queue as a round of its own.
+//
+// Contract: it returns the queued nodes and nothing else, then clears the queue,
+// so one enqueue is exactly one small round. It deliberately does not fall back
+// to the rotation when the queue is empty — an empty queue must cost nothing,
+// otherwise every poll would trigger a full sweep.
+//
+// The exhausted-account filter is kept. Probing a fleet whose Workers quota is
+// spent records failures for nodes whose only fault is the owner's traffic, and
+// those failures then hold the fleet out for hours after the reset. A queue
+// entry pointing at such an account is dropped here rather than turned into
+// misleading evidence; UrgentEnqueue reports the count so the operator is not
+// left guessing why nothing happened.
+func (h *Handler) getUrgentNodes(c *gin.Context) {
+	ids := checkqueue.Pending(h.db)
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{"nodes": []any{}})
+		return
+	}
+
+	var nodes []model.Node
+	if err := h.db.WithContext(c.Request.Context()).Raw(`
+		SELECT * FROM nodes n
+		WHERE n.archived_at IS NULL
+		  AND n.id IN ?
+		  AND (n.cf_account_id IS NULL OR NOT EXISTS (
+		      SELECT 1 FROM configs q
+		      WHERE q.key = 'cf_exhausted_ids'
+		        AND strpos(',' || q.value || ',', ',' || n.cf_account_id::text || ',') > 0
+		  ))`, ids).Scan(&nodes).Error; err != nil {
+		response.InternalError(c, "failed to query urgent nodes")
+		log.Error().Err(err).Msg("check: urgent node query failed")
+		return
+	}
+
+	// Consume the queue only after a successful query. A failed read leaves it
+	// intact so the next poll retries instead of losing the request.
+	checkqueue.Clear(h.db)
+	if len(nodes) < len(ids) {
+		log.Warn().
+			Int("queued", len(ids)).
+			Int("usable", len(nodes)).
+			Msg("check: urgent queue partially dropped (archived or quota-exhausted)")
+	}
+
+	entries := make([]gin.H, 0, len(nodes))
+	for _, n := range nodes {
+		e := gin.H{
+			"hash":     n.Hash,
+			"id":       n.ID,
+			"protocol": n.Protocol,
+			"server":   n.Server,
+		}
+		if n.Raw != "" {
+			var rawMap map[string]interface{}
+			if err := json.Unmarshal([]byte(n.Raw), &rawMap); err == nil {
+				e["raw"] = rawMap
+			}
+		}
+		entries = append(entries, e)
+	}
+	c.JSON(http.StatusOK, gin.H{"nodes": entries})
+}
+
+// UrgentEnqueue handles POST /api/v1/check/urgent.
+//
+// The operator's "check this now" switch: named nodes, or every active node of a
+// named source, are put in front of the rotation for exactly one round. This is
+// what makes adding a source a seconds-long operation instead of restarting the
+// checker and re-probing the whole rotation.
+//
+// Nothing here probes anything. It only records intent; the checker picks it up
+// on its next poll (see cmd/checker), which is also why this endpoint stays cheap
+// and cannot be used to amplify load.
+type urgentRequest struct {
+	NodeIDs   []string `json:"node_ids"`
+	SourceIDs []string `json:"source_ids"`
+}
+
+func (h *Handler) UrgentEnqueue(c *gin.Context) {
+	var req urgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	ids := make([]uuid.UUID, 0, len(req.NodeIDs)+8)
+	var invalid int
+	for _, raw := range req.NodeIDs {
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			invalid++
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	// Source expansion is resolved here, not in the checker: the checker works in
+	// node ids and has no source vocabulary.
+	var expanded int
+	if len(req.SourceIDs) > 0 {
+		sourceIDs := make([]uuid.UUID, 0, len(req.SourceIDs))
+		for _, raw := range req.SourceIDs {
+			id, err := uuid.Parse(strings.TrimSpace(raw))
+			if err != nil {
+				invalid++
+				continue
+			}
+			sourceIDs = append(sourceIDs, id)
+		}
+		if len(sourceIDs) > 0 {
+			var nodeIDs []uuid.UUID
+			if err := h.db.WithContext(c.Request.Context()).Raw(
+				"SELECT ns.node_id FROM node_sources ns JOIN nodes n ON n.id = ns.node_id"+
+					" WHERE ns.source_id IN ? AND n.archived_at IS NULL", sourceIDs).
+				Scan(&nodeIDs).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "source lookup failed"})
+				log.Error().Err(err).Msg("check: urgent enqueue source lookup failed")
+				return
+			}
+			expanded = len(nodeIDs)
+			ids = append(ids, nodeIDs...)
+		}
+	}
+
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{"queued": 0, "pending": checkqueue.Count(h.db), "invalid": invalid})
+		return
+	}
+
+	// Tell the operator up front what will be skipped, instead of queueing work
+	// that the round is going to discard: a node whose CF account has spent its
+	// quota is not probed at all (see getUrgentNodes).
+	var exhausted int
+	if err := h.db.WithContext(c.Request.Context()).Raw(`
+		SELECT count(*) FROM nodes n
+		WHERE n.id IN ?
+		  AND n.cf_account_id IS NOT NULL
+		  AND EXISTS (
+		      SELECT 1 FROM configs q
+		      WHERE q.key = 'cf_exhausted_ids'
+		        AND strpos(',' || q.value || ',', ',' || n.cf_account_id::text || ',') > 0
+		  )`, ids).Scan(&exhausted).Error; err != nil {
+		exhausted = 0
+	}
+
+	added, total, err := checkqueue.Enqueue(h.db, ids)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "queue write failed"})
+		log.Error().Err(err).Msg("check: urgent enqueue failed")
+		return
+	}
+	// The queue is bounded: say so instead of silently dropping the tail.
+	c.JSON(http.StatusOK, gin.H{
+		"queued":              added,
+		"pending":             total,
+		"from_sources":        expanded,
+		"skipped_exhausted":   exhausted,
+		"invalid":             invalid,
+		"capped_at_max_queue": total >= checkqueue.MaxQueue,
+	})
+}
+
+// UrgentPending handles GET /api/v1/check/pending.
+//
+// The checker polls this instead of waiting for its cron tick, so an enqueue is
+// acted on within a poll interval. It is deliberately a count: the checker has no
+// business reading the ids, and a count cannot leak node identity to a caller
+// holding only a checker secret.
+func (h *Handler) UrgentPending(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"pending": checkqueue.Count(h.db)})
 }
 
 // PostResults handles POST /api/v1/check/results.

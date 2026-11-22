@@ -437,6 +437,42 @@ func (u *UpsertService) gateIncoming(ctx context.Context, sourceID uuid.UUID, in
 		maxNewPerSource = 0 // 0 = unlimited for exempt sources
 	}
 
+	// Backlog throttle (2026-11-22). The per-source cap above is flat, so a
+	// firehose source and a high-yield source are throttled identically — and a
+	// flat cap does not react to how far behind the checker already is. Measured
+	// that evening: four free-list sources had 370/273/248/150 unprobed nodes
+	// while ssrsub-ssr had 41 unprobed and a 55% yield. A flat cap treats the
+	// high-yield source as harshly as the firehose.
+	//
+	// This throttle keys on what the source actually owes the checker: nodes
+	// admitted but never probed. A source that keeps up pays nothing, so it
+	// cannot be punished for growing, and a brand-new source starts at zero
+	// backlog and is therefore never throttled by accident.
+	backlogSoft := readCfgInt(u.db, "ingress_backlog_soft", 50)
+	backlogHard := readCfgInt(u.db, "ingress_backlog_hard", 200)
+	capSoft := readCfgInt(u.db, "ingress_backlog_soft_cap", 30)
+	capHard := readCfgInt(u.db, "ingress_backlog_hard_cap", 10)
+	backlog := 0
+	if backlogSoft > 0 {
+		var pending int
+		u.db.WithContext(ctx).Raw(
+			"SELECT count(*) FROM node_sources ns JOIN nodes n ON n.id = ns.node_id"+
+				" WHERE ns.source_id = ? AND n.archived_at IS NULL"+
+				" AND NOT EXISTS (SELECT 1 FROM node_initial_checks c WHERE c.node_id = n.id)",
+			sourceID).Scan(&pending)
+		backlog = pending
+	}
+	dynamicCap := 0
+	switch {
+	case backlogHard > 0 && capHard > 0 && backlog >= backlogHard:
+		dynamicCap = capHard
+	case backlogSoft > 0 && capSoft > 0 && backlog >= backlogSoft:
+		dynamicCap = capSoft
+	}
+	if dynamicCap > 0 && (maxNewPerSource == 0 || dynamicCap < maxNewPerSource) {
+		maxNewPerSource = dynamicCap
+	}
+
 	// Which of these hashes are already in the pool? Those are refreshes,
 	// not additions, and must never be dropped by a quota.
 	hashes := make([]string, 0, len(incoming))
@@ -526,6 +562,8 @@ func (u *UpsertService) gateIncoming(ctx context.Context, sourceID uuid.UUID, in
 			Int("in", len(incoming)).Int("kept", len(out)).
 			Int("endpoint_cap", droppedEP).Int("protocol_quota", droppedProto).Int("dup", droppedDup).Int("retired", droppedRetired).
 			Int("source_new_cap", droppedNewSrc).
+			Int("backlog", backlog).
+			Int("new_cap_applied", maxNewPerSource).
 			Msg("node upsert: ingress gate filtered")
 	}
 	return out

@@ -65,11 +65,14 @@ var DefaultConfigs = map[string]string{
 	"ingress_max_per_endpoint": "3",
 	"ingress_zero_yield_quota": "20",
 	// Retention for nodes that have never once passed a check. 0 disables.
-	"node_never_alive_retention_days": "3",
+	// 1 day, not 3: the pool is fed ~1400 mostly-dead nodes a day, and the
+	// never-alive rule is the only thing draining them. The live database has
+	// run 1 since 2026-11-21 while this default still said 3.
+	"node_never_alive_retention_days": "1",
 	// Retention for nodes that DID pass a check but whose last success is
 	// older than this window (2026-11-15: was-alive-then-dead backlog).
 	// 0 disables.
-	"node_dead_retention_days":     "7",
+	"node_dead_retention_days":     "3",
 	"node_exhausted_archive_hours": "48",
 	"node_exhausted_min_checks":    "20",
 	// Representative probing (internal/checker GetNodes): alive nodes that
@@ -79,6 +82,35 @@ var DefaultConfigs = map[string]string{
 	// Ingress: brand-new nodes a priority-0 source may introduce per round.
 	// Higher-priority sources are exempt. 0 disables.
 	"ingress_max_new_per_source": "40",
+	// Backlog throttle: a source that admits nodes faster than the checker can
+	// probe them is throttled by how much it already owes. Unprobed backlog below
+	// soft is unthrottled, so a source that keeps up never pays and a brand-new
+	// source (backlog 0) can never be throttled by accident.
+	"ingress_backlog_soft":     "50",
+	"ingress_backlog_hard":     "200",
+	"ingress_backlog_soft_cap": "30",
+	"ingress_backlog_hard_cap": "10",
+	// Dead-node probation: how long a node keeps the "probe every round" right.
+	// Beyond this age it competes for its rotation tier like any other dead
+	// node. Measured 2026-11-22: an unbounded probation window kept 220 dead
+	// nodes on every round and consumed most of the initial phase.
+	"check_dead_probation_hours": "24",
+	// Retire a dead node that never succeeded once it has been probed this many
+	// times, regardless of age. The count replaces the age clock so retirement
+	// only happens to nodes that were actually given chances.
+	"node_never_alive_min_checks": "5",
+	// Port redundancy for self-built Workers (internal/distribution): the same
+	// entry is also rendered on these extra TLS ports, comma separated. Empty
+	// disables. 8443 measured reachable on both custom-domain and workers.dev
+	// entries; 2053 is not, so it is not a default.
+	"dist_cf_port_variants": "8443",
+	// On-demand recheck queue (internal/checkqueue). Comma-separated node ids;
+	// consumed by exactly one round. Written by the API, never by hand.
+	//
+	// The poll interval is NOT here: it belongs to the checker process
+	// (schedule.urgent_poll_seconds / CHECK_URGENT_POLL_SECONDS). Seeding it in
+	// this table would look editable and change nothing.
+	"check_urgent_ids": "",
 	// ── Distribution rules (editable in the UI) ─────────────────────────
 	"cf_per_worker_max":          "4",
 	"region_other_max":           "16",

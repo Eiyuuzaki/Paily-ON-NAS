@@ -107,6 +107,32 @@ func doCleanup(db *gorm.DB, rebuild RebuildTrigger) {
 		}
 	}
 
+	// ── Never-alive by evidence, not by age ──────────────────────────
+	// The age-based rule above waits three days, which is the wrong clock for a
+	// node that is being probed every round: measured 2026-11-22, the pool held
+	// 864 dead nodes that had already been probed five or more times and never
+	// once succeeded, each costing a 6-second timeout per attempt. Waiting for
+	// their creation date to age out retired nothing while they kept spending
+	// the probe budget.
+	//
+	// The floor is a count, not a duration, so retirement only ever happens to a
+	// node that was actually given chances. It is deliberately the same rule as
+	// the ingress gate in spirit: free-list entries either work when first seen
+	// or they never do.
+	neverAliveMinChecks := readConfigInt(db, "node_never_alive_min_checks", 5)
+	if neverAliveMinChecks > 0 {
+		archived, err := archiveNeverAliveByChecks(ctx, db, neverAliveMinChecks)
+		if err != nil {
+			log.Warn().Err(err).Msg("cleanup: archive never-alive-by-checks failed")
+		} else if archived > 0 {
+			log.Info().Int64("rows", archived).Int("min_checks", neverAliveMinChecks).
+				Msg("cleanup: archived never-alive nodes by check count")
+			if rebuild != nil {
+				rebuild.TriggerRebuild(ctx)
+			}
+		}
+	}
+
 	// ── Was-alive-but-dead retention ─────────────────────────────────
 	// The never-alive rule above only retires nodes that never succeeded
 	// once. Nodes that DID pass a check and then died stay in the pool
@@ -293,6 +319,38 @@ func archiveNeverAliveNodes(ctx context.Context, db *gorm.DB, cutoff time.Time) 
 	var total int64
 	for {
 		res := db.WithContext(ctx).Exec(query, cutoff, probeCutoff(time.Now()), deleteBatchSize)
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < deleteBatchSize {
+			return total, nil
+		}
+	}
+}
+
+// archiveNeverAliveByChecks retires dead nodes that never succeeded once, however
+// long ago they were created, as soon as they have been probed minChecks times.
+//
+// It is the count-based sibling of archiveNeverAliveNodes: same "never succeeded"
+// predicate, but it stops waiting for the creation date to age out, because a
+// node that is being probed is already costing the budget that rule was trying
+// to protect — the age clock only delays the saving.
+//
+// The recent-probe guard is not optional. A node whose CF account is out of
+// quota is never probed, so it accumulates no fresh evidence; retiring it on
+// that silence would convert a temporary account outage into permanent loss.
+func archiveNeverAliveByChecks(ctx context.Context, db *gorm.DB, minChecks int) (int64, error) {
+	query := "UPDATE nodes SET archived_at = NOW() WHERE id IN (" +
+		"SELECT n.id FROM nodes n WHERE n.alive = false AND n.archived_at IS NULL" +
+		" AND NOT EXISTS (SELECT 1 FROM node_initial_checks c" +
+		"  WHERE c.node_id = n.id AND c.latency_ms <> -1)" +
+		" AND (SELECT count(*) FROM node_initial_checks c2 WHERE c2.node_id = n.id) >= ?" +
+		" AND EXISTS (SELECT 1 FROM node_initial_checks p WHERE p.node_id = n.id" +
+		"  AND p.checked_at > ?) LIMIT ?)"
+	var total int64
+	for {
+		res := db.WithContext(ctx).Exec(query, minChecks, probeCutoff(time.Now()), deleteBatchSize)
 		if res.Error != nil {
 			return total, res.Error
 		}

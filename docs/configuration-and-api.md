@@ -60,7 +60,7 @@ Paily 主服务的配置分为两层：
 | 存活 | `node_alive_check_window_minutes` | `240` | 最新初筛的存活窗口，单位分钟。 |
 | 存活 | `check_dead_proof_rounds` | `4` | 未证明节点需连续失败多少轮才判死。 |
 | 存活 | `check_dead_sweep_slots` | `12` | 判死清扫节奏（每 N 轮扫一次，默认约一天）。 |
-| 存活 | `check_dead_grace_minutes` | `360` | 判死后的宽限期，期间保持高频重测。 |
+| 存活 | `check_dead_probation_hours` | `24` | 新节点的全测窗口：入库超过该小时数后，死节点按轮转档位探测，不再每轮全测。`0` 表示所有死节点都只按轮转。 |
 | 存活 | `check_rep_per_server` | `2` | 同一入口每轮探测的代表数（`0` = 全量）。 |
 | 存活 | `check_rep_min_group` | `3` | 活节点数不超过该值的小组不抽代表，全部实探。 |
 | 评分 | `score_decay_alpha` | `0.7` | 评分的时间衰减系数。 |
@@ -89,9 +89,15 @@ Paily 主服务的配置分为两层：
 | 历史 | `profile_update_interval` | `24` | 节点画像重建间隔，单位小时。 |
 | 池子 | `ingress_max_per_endpoint` | `3` | 同一 `server:port` 最多准入的新节点数。 |
 | 池子 | `ingress_zero_yield_quota` | `20` | 零产出协议（ss/ssr/hysteria2/socks5/tuic/anytls/wireguard）各自的池内上限。 |
+| 分发 | `dist_cf_port_variants` | `8443` | 自建 Worker 额外渲染的 TLS 端口（逗号分隔，空=关闭）。端口是平台属性，零探测成本。 |
 | 池子 | `ingress_max_new_per_source` | `40` | 优先级 0 来源每轮可引入的新节点数（更高优先级来源不限）。 |
-| 池子 | `node_never_alive_retention_days` | `3` | 从未存活节点的归档保留天数，`0` 关闭。 |
-| 池子 | `node_dead_retention_days` | `7` | 曾活后死节点的保留天数，`0` 关闭。 |
+| 池子 | `ingress_backlog_soft` | `50` | 积压限流起点：该源“已入库但未测”的节点数超过此值即开始限流。`0` 关闭限流。 |
+| 池子 | `ingress_backlog_hard` | `200` | 重度积压阈值，超过后走更紧的配额。 |
+| 池子 | `ingress_backlog_soft_cap` | `30` | 积压超起点后，该源每轮最多新增的节点数。 |
+| 池子 | `ingress_backlog_hard_cap` | `10` | 积压超重度阈值后，该源每轮最多新增的节点数。 |
+| 池子 | `node_never_alive_retention_days` | `1` | 从未存活节点的归档保留天数，`0` 关闭。 |
+| 池子 | `node_never_alive_min_checks` | `5` | 从未存活节点再按次数归档：已测满该次数即归档，不看年龄。`0` 关闭。 |
+| 池子 | `node_dead_retention_days` | `3` | 曾活后死节点（最后一次成功早于该天数）的保留天数，`0` 关闭。 |
 | 文件名 | `filename_clash` | `Paily Connect.yaml` | Clash 下载文件名。 |
 | 文件名 | `filename_singbox` | `Paily Connect.json` | Sing-box 下载文件名。 |
 | 文件名 | `filename_base64` | `Paily Connect.txt` | Base64 下载文件名。 |
