@@ -97,6 +97,19 @@ func main() {
 			log.Fatal().Err(err).Msg("failed to init database")
 		}
 		cands := naming.ColoCandidates()
+		// Extra candidates from an external scanner (2026-11-23).
+		//
+		// Measured against XIU2/CloudflareSpeedTest on the same yardstick: its
+		// picks landed on 104.21.x and delivered 0.57 MB/s median while our own
+		// /24 table landed on 172.66.x at 0.39 MB/s — same colo, same line, +46%
+		// from the candidate space alone. Neither tool's latency ranking predicts
+		// throughput (Spearman ~0), so what cfst is genuinely better at is
+		// sampling; borrowing its addresses while re-measuring them here keeps
+		// colo/RTT provenance ours.
+		if extra := readCandidateFile(os.Getenv("IPSCAN_EXTRA_FILE")); len(extra) > 0 {
+			cands = append(cands, extra...)
+			log.Info().Int("extra", len(extra)).Msg("ipscan: external candidates merged")
+		}
 		// The entry addresses actually in use must always be re-measured: they are
 		// what every node dials, and CF routing moves them between colos.
 		// v6 entry addresses are included too (2026-11-19): this filter used to
@@ -593,4 +606,26 @@ func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// readCandidateFile loads one IP or CIDR per line, ignoring blanks and #comments.
+// A missing or unreadable file is not an error: the scan simply runs with its
+// built-in candidates, so a broken external seeder never blocks the scan.
+func readCandidateFile(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, 256)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
