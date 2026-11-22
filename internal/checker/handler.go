@@ -774,6 +774,32 @@ func groupRegionObservations(probes []regionProbeRow, regions, sources map[uuid.
 	return grouped
 }
 
+// regionSourceRank orders exit-region evidence by how directly it observes the
+// exit. native_egress queries the exit IP itself; entry_colo is the measured
+// Cloudflare edge, which for a Worker is also where its sockets leave from;
+// legacy_egress resolves a country by script without keeping the IP; inbound_mmdb
+// describes the entry and is the weakest claim of all.
+func regionSourceRank(source string) int {
+	switch source {
+	case "native_egress":
+		return 3
+	case "entry_colo":
+		return 2
+	case "legacy_egress":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// shouldReplaceRegion reports whether next may overwrite current. Evidence of
+// equal or stronger rank always wins, so a node keeps improving; weaker evidence
+// is refused. On 2026-11-22 one legacy_egress round (no egress IP) replaced three
+// native_egress rounds and relabelled a Hong Kong exit as US.
+func shouldReplaceRegion(current, next string) bool {
+	return regionSourceRank(next) >= regionSourceRank(current)
+}
+
 // applyRegionUpdates writes the measured exit region for probed nodes and
 // propagates it to every alive sibling on the same server. All nodes on one
 // server dial the same entry IP and the same Worker, so their exit behavior
@@ -846,6 +872,30 @@ WHERE d.checked_at > now() - interval '3 days'
 	}
 }
 
+// loadCurrentRegionSources reads the region_source already stored for each node,
+// so applyRegionUpdates can refuse evidence weaker than what it already holds.
+func (h *Handler) loadCurrentRegionSources(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]string {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	type row struct {
+		ID     uuid.UUID
+		Source string
+	}
+	var rows []row
+	if err := h.db.WithContext(ctx).Model(&model.Node{}).
+		Select("id, region_source AS source").
+		Where("id IN ?", ids).Scan(&rows).Error; err != nil {
+		log.Warn().Err(err).Msg("checker: region source lookup failed; applying updates unguarded")
+		return out
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Source
+	}
+	return out
+}
+
 func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid.UUID]string, regionSources map[uuid.UUID]string) {
 	if len(regionUpdates) == 0 {
 		return
@@ -865,6 +915,17 @@ func (h *Handler) applyRegionUpdates(ctx context.Context, regionUpdates map[uuid
 		Select("id, COALESCE(raw::jsonb->>'server', server) AS raw_server").
 		Where("id IN ?", ids).Scan(&probes).Error; err != nil {
 		log.Warn().Err(err).Int("nodes", len(ids)).Msg("checker: region probe lookup failed")
+		return
+	}
+	// Drop updates that would weaken the evidence already on the row.
+	currentSources := h.loadCurrentRegionSources(ctx, ids)
+	for id, next := range regionSources {
+		if current, ok := currentSources[id]; ok && !shouldReplaceRegion(current, next) {
+			delete(regionUpdates, id)
+			delete(regionSources, id)
+		}
+	}
+	if len(regionUpdates) == 0 {
 		return
 	}
 	byRawServer := groupRegionObservations(probes, regionUpdates, regionSources)
