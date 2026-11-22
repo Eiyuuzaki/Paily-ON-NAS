@@ -62,6 +62,7 @@ func main() {
 	cfgFile := flag.String("config", "", "path to config file (default: ./config.yaml)")
 	migrateFlag := flag.Bool("migrate", false, "migrate config tables from SQLite to PostgreSQL, then exit")
 	ipscanFlag := flag.Bool("ipscan", false, "probe candidate Cloudflare /24s for fast edge entries, then exit")
+	benchFlag := flag.Bool("bench", false, "measure single-flow throughput of in-use entry addresses, then exit")
 	migrateFrom := flag.String("migrate-from", "", "path to source SQLite database file (required with -migrate)")
 	flag.Parse()
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr}).Level(zerolog.InfoLevel)
@@ -135,6 +136,45 @@ func main() {
 			log.Fatal().Err(err).Msg("ipscan failed")
 		}
 		fmt.Printf("ipscan: probed=%d hkg=%d candidates=%d in_use=%d\n", probed, found, len(cands), len(inUse))
+		return
+	}
+
+	// ── Entry throughput mode ─────────────────────────────────────────────────
+	// Latency ranks the wrong path on this line: the only CF edge China Mobile
+	// reaches quickly is Hong Kong, and that edge throttles each TCP flow to
+	// about 1 MB/s, while US West carried 4.2 MB/s per flow at 141 ms more
+	// latency. A latency-only ranking therefore sends every client to the slow
+	// path. This measures the missing column.
+	if *benchFlag {
+		cfg, err := config.Load(*cfgFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load config")
+		}
+		database, err := db.Init(cfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to init database")
+		}
+		target := os.Getenv("BENCH_URL")
+		if target == "" {
+			// 20 MB, not 4. Cloudflare's edge lets a download burst before it
+			// settles: the same entry measured 18.8 MB/s on a 4 MB pull, 2.3 MB/s
+			// on a second 4 MB pull and 9.4 MB/s sustained on 20 MB, while a
+			// throttled Hong Kong entry sat at 0.8 MB/s either way. A payload
+			// short enough to finish inside the burst allowance cannot tell the
+			// two apart, which is the whole question this measures.
+			target = "https://speed.cloudflare.com/__down?bytes=20971520"
+		}
+		measured, failed, err := entryip.Bench(context.Background(), database, entryip.BenchOptions{
+			URL:         target,
+			Runs:        envIntOr("BENCH_RUNS", 2),
+			Concurrency: envIntOr("BENCH_CONCURRENCY", 2),
+			Limit:       envIntOr("BENCH_LIMIT", 40),
+			Timeout:     time.Duration(envIntOr("BENCH_TIMEOUT_S", 20)) * time.Second,
+		})
+		if err != nil {
+			log.Fatal().Err(err).Msg("bench failed")
+		}
+		fmt.Printf("bench: measured=%d failed=%d url=%s\n", measured, failed, target)
 		return
 	}
 

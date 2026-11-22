@@ -27,6 +27,17 @@ type EntryIP struct {
 	// Source records where the row came from: "passive" (node traffic) or "scan".
 	Source     string    `gorm:"size:16;not null;default:'passive'"`
 	MeasuredAt time.Time `gorm:"not null"`
+	// ThroughputKbps is the per-flow download throughput this entry can carry,
+	// measured single-stream. Latency does not predict it: on 2026-11-23 two CF
+	// entries 141ms apart in latency differed 19x in single-flow throughput,
+	// because CF's Hong Kong edge — the only one China Mobile reaches quickly —
+	// throttles each flow to roughly 1 MB/s while US West did not throttle at
+	// all. Ranking by latency alone therefore picks the slow path every time.
+	// 0 means not measured.
+	ThroughputKbps int `gorm:"not null;default:0"`
+	// ThroughputAt is when ThroughputKbps was measured, so a stale number can be
+	// discounted without discarding the row.
+	ThroughputAt *time.Time `gorm:""`
 }
 
 func (EntryIP) TableName() string { return "entry_ips" }
