@@ -15,6 +15,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/filter"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -93,20 +94,23 @@ func RegionOrder() []string {
 
 // nodeFields holds the values passed to the naming expression as node.*.
 type nodeFields struct {
-	Region        string          `expr:"region"`
-	RegionFlag    string          `expr:"region_flag"`
-	Grade         string          `expr:"grade"`
-	Confidence    string          `expr:"confidence"`
-	Score         float64         `expr:"score"`
-	Seq           string          `expr:"seq"`
-	Server        string          `expr:"server"`
-	Protocol      string          `expr:"protocol"`
-	Alive         bool            `expr:"alive"`
-	Streaming     map[string]bool `expr:"streaming"`
-	Sponsor       string          `expr:"sponsor"`
-	SourcePriority int           `expr:"source_priority"` // 0=公益, 1=机场/付费, 2=最高
-	EntryRegion   string          `expr:"entry_region"`    // 入口地区（CF 名字前缀推断，非CF=出口）
-	EntryFlag     string          `expr:"entry_flag"`
+	Region         string          `expr:"region"`
+	RegionFlag     string          `expr:"region_flag"`
+	Grade          string          `expr:"grade"`
+	Confidence     string          `expr:"confidence"`
+	Score          float64         `expr:"score"`
+	Seq            string          `expr:"seq"`
+	Server         string          `expr:"server"`
+	Protocol       string          `expr:"protocol"`
+	Alive          bool            `expr:"alive"`
+	Streaming      map[string]bool `expr:"streaming"`
+	Sponsor        string          `expr:"sponsor"`
+	SourcePriority int             `expr:"source_priority"` // 0=公益, 1=机场/付费, 2=最高
+	EntryRegion    string          `expr:"entry_region"`    // 入口地区（CF 名字前缀推断，非CF=出口）
+	EntryFlag      string          `expr:"entry_flag"`
+	// Speed is the measured single-flow throughput of the entry ("18M"),
+	// empty when unmeasured. Latency cannot stand in for it: see speedLabel.
+	Speed string `expr:"speed"`
 }
 
 // namingEnv is the top-level context for the node naming expression.
@@ -127,7 +131,7 @@ func nodeGrade(entry *cache.NodeCacheEntry, gradeS, gradeA, gradeB, gradeC float
 }
 
 // defaultTemplate is used when no node_name_template config entry exists.
-const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + (node.confidence == "high" ? "" : " ?" + node.confidence) + " · " + (node.entry_region == "" || node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
+const defaultTemplate = `(unlock_flags != "" ? "[" + unlock_flags + "] " : "") + node.grade + (node.speed != "" ? " " + node.speed : "") + " · " + (node.entry_region == "" || node.entry_region == node.region ? node.region_flag + node.region : node.entry_region + "→" + node.region) + " " + node.seq + (node.sponsor != "" ? " [" + node.sponsor + "]" : "")`
 
 // cfNameRe extracts the region from a self-built CF node name like CF-HKG-245
 // (optional single-letter account segment, e.g. CF-C-SG-01).
@@ -146,9 +150,10 @@ var coloRegion = map[string]string{
 // refresh and by the periodic discovery scan). Read it through a small cache so
 // naming one subscription does not hit the database per node.
 var (
-	coloMu  sync.RWMutex
-	coloMap = map[string]string{}
-	coloExp time.Time
+	coloMu   sync.RWMutex
+	coloMap  = map[string]string{}
+	speedMap = map[string]int{}
+	coloExp  time.Time
 )
 
 const coloTTL = 5 * time.Minute
@@ -161,21 +166,65 @@ func refreshEntryColo(db *gorm.DB) {
 		return
 	}
 	type row struct {
-		IP   string
-		Colo string
+		IP             string
+		Colo           string
+		ThroughputKbps int
 	}
+	// Throughput rides along with colo on purpose: both describe the entry the
+	// node dials, and one query serves both. Rows with an empty colo are kept
+	// when they carry a throughput reading, otherwise a measured-but-unlabelled
+	// entry would lose its speed tag.
 	var rows []row
-	if err := db.Raw("SELECT ip, colo FROM entry_ips WHERE colo <> ''").Scan(&rows).Error; err != nil {
+	if err := db.Raw("SELECT ip, colo, throughput_kbps FROM entry_ips WHERE colo <> '' OR throughput_kbps > 0").Scan(&rows).Error; err != nil {
 		return
 	}
 	m := make(map[string]string, len(rows))
+	sp := make(map[string]int, len(rows))
 	for _, r := range rows {
-		m[r.IP] = strings.ToUpper(r.Colo)
+		if r.Colo != "" {
+			m[r.IP] = strings.ToUpper(r.Colo)
+		}
+		if r.ThroughputKbps > 0 {
+			sp[r.IP] = r.ThroughputKbps
+		}
 	}
 	coloMu.Lock()
 	coloMap = m
+	speedMap = sp
 	coloExp = time.Now().Add(coloTTL)
 	coloMu.Unlock()
+	// One line per refresh: the entry cache feeds both the colo and the speed
+	// tag, and a silent failure here shows up only as missing labels.
+	log.Info().Int("rows", len(rows)).Int("colo", len(m)).Int("speed", len(sp)).
+		Msg("naming: entry cache refreshed")
+}
+
+// entrySpeed returns the measured single-flow throughput for an entry IP, in
+// kbit/s, or 0 when it was never measured.
+func entrySpeed(ip string) int {
+	coloMu.RLock()
+	defer coloMu.RUnlock()
+	return speedMap[ip]
+}
+
+// speedLabel renders a throughput reading as the short tag carried in node
+// names: "18M" for 18 MB/s, "0.8M" below one, "" when unmeasured.
+//
+// It exists because latency ranks the wrong path on a China Mobile line: the
+// Hong Kong edge this line reaches in 47 ms throttles each flow to under
+// 1 MB/s while a US West edge at 188 ms carried 18.7 MB/s over a 50 MB pull.
+// Without a visible number the two are indistinguishable in a client that
+// sorts by latency, which is exactly how the slow one keeps winning.
+func speedLabel(ip string) string {
+	kbps := entrySpeed(ip)
+	if kbps <= 0 {
+		return ""
+	}
+	mbps := float64(kbps) / 8000
+	if mbps >= 10 {
+		return fmt.Sprintf("%.0fM", mbps)
+	}
+	return fmt.Sprintf("%.1fM", mbps)
 }
 
 // entryColo returns the measured colo for an entry IP, if known.
@@ -345,6 +394,7 @@ func Render(ctx context.Context, entry *cache.NodeCacheEntry, seqNo int, unlockF
 			Score:          entry.Score,
 			Seq:            seqID(region, seqNo),
 			Server:         entry.Server,
+			Speed:          speedLabel(entry.Server),
 			Protocol:       entry.Protocol,
 			Alive:          entry.Alive,
 			Streaming:      entry.StreamingResult,
