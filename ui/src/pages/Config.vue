@@ -17,16 +17,12 @@ const KEY_LABELS: Record<string, string> = {
   score_weight_latency: '评分权重·延迟',
   score_weight_stability: '评分权重·稳定性',
   score_weight_speed: '评分权重·速度',
-  grade_s_min: '（遗留）S 级最低分',
-  grade_a_min: '（遗留）A 级最低分',
-  grade_b_min: '（遗留）B 级最低分',
-  grade_c_min: '（遗留）C 级最低分',
+  grade_s_min: 'S 级最低分（评分 0~1）',
+  grade_a_min: 'A 级最低分（评分 0~1）',
+  grade_b_min: 'B 级最低分（评分 0~1）',
+  grade_c_min: 'C 级最低分（评分 0~1）',
   grade_jitter_weight: '抖动权重（×抖动计入等效延迟）',
   grade_fail_cost_ms: '失败惩罚成本 (ms)',
-  grade_s_ms: 'S 级上限·等效延迟 (ms)',
-  grade_a_ms: 'A 级上限·等效延迟 (ms)',
-  grade_b_ms: 'B 级上限·等效延迟 (ms)',
-  grade_c_ms: 'C 级上限·等效延迟 (ms)',
   min_fetch_samples: 'fetch dead 触发最少记录数',
   min_check_samples: 'node dead 触发最少初筛数',
   cleanup_interval_minutes: '历史清理周期（分钟）',
@@ -79,7 +75,12 @@ const search = ref('')
 const EXPR_KEYS = ['node_name_template', 'node_distribute_filter']
 const DIST_KEYS = ['cf_per_worker_max', 'region_other_max', 'dist_allow_paid_selfsigned', 'dist_allow_plaintext', 'dist_selfsigned_fallback']
 // Internal/technical keys that should not appear as editable fields.
-const HIDE_KEYS = ['distribute_per_egress_max', 'cf_module', 'grade_s_min', 'grade_a_min', 'grade_b_min', 'grade_c_min']
+// grade_*_ms / priority_ratio / *_check_history_days are inert: the grade band is
+// cut from the score (scoring/grade.go) so nothing reads the millisecond edges,
+// priority_ratio is read and immediately discarded, and the two history keys were
+// superseded by check_run_history_days. grade_*_min is the opposite case: it is
+// what actually decides the band, so it must stay visible.
+const HIDE_KEYS = ['distribute_per_egress_max', 'cf_module', 'grade_s_ms', 'grade_a_ms', 'grade_b_ms', 'grade_c_ms', 'priority_ratio', 'initial_check_history_days', 'deep_check_history_days']
 const HIDE_PREFIX = ['cf_usage_']
 const FALLBACK_OPTS = [
   { title: '不足即补（推荐）', value: 'short' },
@@ -95,13 +96,10 @@ function confirmPlaintext() { localConfig['dist_allow_plaintext'] = '1'; showPla
 
 const DEFAULTS: Record<string, string> = {
   max_distribute: '200',
-  priority_ratio: '0.6',
   dead_latency_ms: '3000',
   fetch_dead_window_days: '7',
   node_dead_window_days: '4',
   fetch_history_window_days: '7',
-  initial_check_history_days: '3',
-  deep_check_history_days: '7',
   score_decay_alpha: '0.7',
   score_weight_latency: '0.7',
   score_weight_stability: '0.3',
@@ -114,10 +112,6 @@ const DEFAULTS: Record<string, string> = {
   grade_c_min: '0.35',
   grade_jitter_weight: '2.0',
   grade_fail_cost_ms: '3000',
-  grade_s_ms: '200',
-  grade_a_ms: '400',
-  grade_b_ms: '600',
-  grade_c_ms: '1000',
   cleanup_interval_minutes: '30',
   default_sponsor_text: '',
   node_distribute_filter: '',
@@ -196,7 +190,7 @@ const normalKeys = computed(() =>
 )
 
 // 把 priority_ratio 这类 0~1 的键渲染成滑杆
-const RATIO_KEYS = ['priority_ratio', 'score_decay_alpha', 'score_weight_latency', 'score_weight_stability', 'score_weight_speed']
+const RATIO_KEYS = ['score_decay_alpha', 'score_weight_latency', 'score_weight_stability', 'score_weight_speed']
 
 onMounted(loadConfig)
 </script>
