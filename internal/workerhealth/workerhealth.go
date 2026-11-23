@@ -128,14 +128,22 @@ func EvaluateRun(ctx context.Context, db *gorm.DB, runID string) error {
 		Med  *float64 `gorm:"column:med"`
 	}
 	var cfs []cfRow
-	// Scope: which nodes count as CF for the breaker. Deliberately left on the
-	// CF- name prefix for now. The stricter-looking "servername non-empty and
-	// server is an IP" test (distribution.egressIdentity) is the wrong test
-	// here: it also matches airport nodes that point an IP at a decoy SNI
-	// (AGENTS 6b), and a bogus Worker opening the breaker would drop every CF
-	// node at distribution time. Narrowing this to the real Worker scope needs
-	// an origin=self-built qualifier, which is a separate change.
-	q1 := "WITH dc AS (SELECT node_id, avg_latency_ms, jitter_ms FROM node_deep_checks WHERE check_run_id = ? AND source = 'direct'), nd AS (SELECT n.id, n.server, coalesce(nullif(n.raw::jsonb->>'servername',''),'') sni, (n.raw::jsonb->>'name') LIKE 'CF-%' is_cf FROM nodes n WHERE n.archived_at IS NULL) SELECT nd.sni AS sni, count(*) AS n, count(DISTINCT nd.server) AS ents, percentile_disc(0.5) WITHIN GROUP (ORDER BY CASE WHEN dc.avg_latency_ms > 0 THEN dc.avg_latency_ms + 2*dc.jitter_ms END) AS med FROM dc JOIN nd ON nd.id = dc.node_id WHERE nd.is_cf GROUP BY nd.sni"
+	// Scope: the cohort must be "served by a backend the project operates", not
+	// "named CF-". The name-prefix test split one Worker across aliases: measured
+	// 2026-11-23, lencf.dpdns.org had 456 self-built nodes but only 35 matched
+	// CF-%, because 149 of them are named HKG-*. Those sat outside the breaker
+	// while still being distributed, so an open Worker kept shipping them.
+	//
+	// The shape test (servername set, server is an IP) is only safe together with
+	// the origin test: alone it also matches airport nodes pointing an IP at a
+	// decoy SNI (AGENTS 6b), and a bogus Worker opening the breaker drops real
+	// nodes. The airport cohort is the control group, so q2 excludes whatever q1
+	// counted and the two stay disjoint.
+	//
+	// "self-built" resolves exactly as distribution.originPrefixResolver does it:
+	// a source whose origin is self-built, or the CF apex subscription. The
+	// breaker and the [自建] label must never disagree about who a Worker serves.
+	q1 := "WITH dc AS (SELECT node_id, avg_latency_ms, jitter_ms FROM node_deep_checks WHERE check_run_id = ? AND source = 'direct'), nd AS (SELECT n.id, n.server, coalesce(nullif(n.raw::jsonb->>'servername',''),'') AS sni, bool_or(s.origin = 'self-built' OR s.identifier = 'cf-apex-sub') AS is_worker FROM nodes n JOIN dc x ON x.node_id = n.id LEFT JOIN node_sources ns ON ns.node_id = n.id LEFT JOIN sources s ON s.id = ns.source_id WHERE n.archived_at IS NULL GROUP BY n.id, n.server, (n.raw::jsonb->>'servername')) SELECT nd.sni AS sni, count(*) AS n, count(DISTINCT nd.server) AS ents, percentile_disc(0.5) WITHIN GROUP (ORDER BY CASE WHEN dc.avg_latency_ms > 0 THEN dc.avg_latency_ms + 2*dc.jitter_ms END) AS med FROM dc JOIN nd ON nd.id = dc.node_id WHERE nd.is_worker AND nd.sni <> '' AND (nd.server ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' OR nd.server LIKE '%:%') GROUP BY nd.sni"
 	if err := db.WithContext(ctx).Raw(q1, runID).Scan(&cfs).Error; err != nil {
 		return fmt.Errorf("workerhealth: cf aggregate: %w", err)
 	}
@@ -143,7 +151,7 @@ func EvaluateRun(ctx context.Context, db *gorm.DB, runID string) error {
 		N   int      `gorm:"column:n"`
 		Med *float64 `gorm:"column:med"`
 	}
-	q2 := "WITH dc AS (SELECT d.node_id, d.avg_latency_ms, d.jitter_ms FROM node_deep_checks d WHERE d.check_run_id = ? AND d.source = 'direct'), nd AS (SELECT n.id, coalesce(nullif(n.raw::jsonb->>'servername',''),'') sni, (n.raw::jsonb->>'name') LIKE 'CF-%' is_cf, bool_or(s.origin IN ('paid-airport','public-airport')) is_airport FROM node_deep_checks d JOIN nodes n ON n.id=d.node_id LEFT JOIN node_sources ns ON ns.node_id=n.id LEFT JOIN sources s ON s.id=ns.source_id WHERE n.archived_at IS NULL GROUP BY n.id) SELECT count(*) AS n, percentile_disc(0.5) WITHIN GROUP (ORDER BY CASE WHEN dc.avg_latency_ms > 0 THEN dc.avg_latency_ms + 2*dc.jitter_ms END) AS med FROM dc JOIN nd ON nd.id = dc.node_id WHERE NOT nd.is_cf AND nd.is_airport"
+	q2 := "WITH dc AS (SELECT node_id, avg_latency_ms, jitter_ms FROM node_deep_checks WHERE check_run_id = ? AND source = 'direct'), nd AS (SELECT n.id, bool_or(s.origin = 'self-built' OR s.identifier = 'cf-apex-sub') AS is_worker, bool_or(s.origin IN ('paid-airport','public-airport')) AS is_airport FROM nodes n JOIN dc x ON x.node_id = n.id LEFT JOIN node_sources ns ON ns.node_id = n.id LEFT JOIN sources s ON s.id = ns.source_id WHERE n.archived_at IS NULL GROUP BY n.id) SELECT count(*) AS n, percentile_disc(0.5) WITHIN GROUP (ORDER BY CASE WHEN dc.avg_latency_ms > 0 THEN dc.avg_latency_ms + 2*dc.jitter_ms END) AS med FROM dc JOIN nd ON nd.id = dc.node_id WHERE nd.is_airport AND NOT nd.is_worker"
 	if err := db.WithContext(ctx).Raw(q2, runID).Scan(&air).Error; err != nil {
 		return fmt.Errorf("workerhealth: airport aggregate: %w", err)
 	}
