@@ -34,6 +34,16 @@ func run(ctx context.Context, db *gorm.DB, rebuild RebuildTrigger) {
 
 	for {
 		intervalMinutes := readConfigInt(db, "cleanup_interval_minutes", 30)
+		// A non-positive duration makes time.NewTicker panic, and this runs in a
+		// background goroutine with no recover: one bad row would take the whole
+		// process down and it would come back in the same state. The config API
+		// rejects such values now; this guard covers rows written before that
+		// check existed or edited straight in SQL. Drop it once the API has been
+		// the only writer for a release.
+		if intervalMinutes <= 0 {
+			log.Warn().Int("value", intervalMinutes).Msg("cleanup: non-positive interval in config, falling back to 30m")
+			intervalMinutes = 30
+		}
 		ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 		select {
 		case <-ctx.Done():
@@ -196,7 +206,7 @@ func refreshTimeHealth(ctx context.Context, db *gorm.DB) error {
 		TotalCount int64
 	}
 	err := db.WithContext(ctx).Table("node_initial_checks").
-		Select("node_id, EXTRACT(hour FROM checked_at)::int AS hour, "+
+		Select("node_id, EXTRACT(hour FROM checked_at AT TIME ZONE 'UTC')::int AS hour, "+
 			"COUNT(*) FILTER (WHERE latency_ms > 0) AS alive_count, COUNT(*) AS total_count").
 		Where("checked_at > ?", time.Now().AddDate(0, 0, -7)).
 		Group("node_id, hour").
