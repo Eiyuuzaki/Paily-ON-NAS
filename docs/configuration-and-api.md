@@ -74,11 +74,7 @@ Paily 主服务的配置分为两层：
 | 评分 | `score_history_since` | — | 评分只取该 RFC3339 时间之后的复筛记录。 |
 | 评分 | `grade_jitter_weight` | `2.0` | 抖动向等效延迟的折算权重。 |
 | 评分 | `grade_fail_cost_ms` | `3000` | 失败占比的等效延迟惩罚（毫秒）。 |
-| 评分 | `grade_s_ms` | `200` | S 级上限（等效延迟，毫秒）。 |
-| 评分 | `grade_a_ms` | `400` | A 级上限。 |
-| 评分 | `grade_b_ms` | `600` | B 级上限。 |
-| 评分 | `grade_c_ms` | `1000` | C 级上限，超过为 D。 |
-| 命名 | `grade_s_min` / `_a_min` / `_b_min` / `_c_min` | `0.85` / `0.78` / `0.60` / `0.35` | **遗留**：按分数划级的旧阈值，已不参与分级，界面隐藏。 |
+| 评分 | `grade_s_min` / `_a_min` / `_b_min` / `_c_min` | `0.85` / `0.78` / `0.60` / `0.35` | **等级阈值，按评分划级**（`scoring.go` → `gradeForScore`）。 |
 | 命名 | `node_name_template` | 见代码 | 节点命名表达式模板。 |
 | 命名 | `default_sponsor_text` | 空 | 没有出口标识规则命中时追加的文案。 |
 | 历史 | `fetch_dead_window_days` | `7` | 抓取失效判定窗口，单位天。 |
