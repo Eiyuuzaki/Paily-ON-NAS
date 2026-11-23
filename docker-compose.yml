@@ -66,6 +66,8 @@ services:
       MIHOMO_API_URL: ${MIHOMO_API_URL:-http://172.17.0.1:9090}
       MIHOMO_API_SECRET: ${MIHOMO_API_SECRET:-}
       CF_TOKEN_DIR: /app/tokens
+      # 订阅令牌可只从环境变量维护；为空时回落到 configs 表里的值。
+      PAILY_AUTH_SUBSCRIBE_TOKEN: ${PAILY_AUTH_SUBSCRIBE_TOKEN:-}
     volumes:
       - ./bin/paily-core:/app/paily-core:ro
       - ./etc/core.yaml:/app/config.yaml:ro
