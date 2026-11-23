@@ -240,7 +240,7 @@ func (h *Handler) Distribute(
 	})
 	for i, sn := range selected {
 		unlockFlags := assembleUnlockFlags(sn.Entry, requestedUnlocks, filterMode)
-		name := originPrefix(sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
+		name := withV6Tag(originPrefix(sn.Entry), sn.Entry) + " " + naming.Render(c.Request.Context(), sn.Entry, sn.SeqNo, unlockFlags, filterMode, preset, h.db)
 		proxy, err := proxyWithRequiredECH(proxyWithChain(sn.Entry.ProxyNode, chainPlan[i]), proofs[sn.Entry.ID])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "ECH policy render failed"})
@@ -484,6 +484,19 @@ func nodeMatchesUnlocks(e *cache.NodeCacheEntry, unlocks []string) bool {
 		}
 	}
 	return true
+}
+
+// withV6Tag marks an IPv6-only dialable entry inside the origin bracket, e.g.
+// [自建] → [自建·V6]. The marker exists because a client with IPv6 disabled dies
+// on these nodes instantly, and the name is the only place a user can see why.
+func withV6Tag(prefix string, e *cache.NodeCacheEntry) string {
+	if e == nil || !strings.Contains(e.Server, ":") {
+		return prefix
+	}
+	if strings.HasSuffix(prefix, "]") {
+		return prefix[:len(prefix)-1] + "·V6]"
+	}
+	return prefix + "·V6"
 }
 
 // assembleUnlockFlags builds the unlock_flags string per §6 rules.
