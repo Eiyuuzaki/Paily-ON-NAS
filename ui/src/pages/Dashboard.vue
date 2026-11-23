@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, defineAsyncComponent } from 'vue'
 import { useDisplay } from 'vuetify'
 import { getStats } from '../api/stats'
+import { getExtAccess } from '../api/extaccess'
 import { getTrafficStats, type TrafficStatsResponse, type TrafficRange } from '../api/traffic'
 import { formatBytes } from '../utils/format'
 import { copyText } from '../utils/clipboard'
@@ -58,11 +59,29 @@ const BASE =
   (typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.hostname}:21380`
     : '')
-const subscriptions = [
-  { key: 'clash', label: 'Clash', url: `${BASE}/clash`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full' },
-  { key: 'singbox', label: 'Sing-box', url: `${BASE}/singbox`, desc: 'Sing-box JSON', icon: 'mdi-cube-outline' },
-  { key: 'base64', label: 'Base64', url: `${BASE}/base64`, desc: '通用 Base64 订阅', icon: 'mdi-code-braces' },
-]
+const extToken = ref('')
+const linkMode = ref<'lan' | 'public'>('lan')
+const PUBLIC_HOST = 'https://sub.lencf.dpdns.org'
+
+// 订阅链接带访问 token：无 token 的链接在开启鉴权后是 401 死链
+const subscriptions = computed(() => {
+  const q = extToken.value ? `?token=${extToken.value}` : ''
+  const base = linkMode.value === 'public' ? PUBLIC_HOST : `${window.location.protocol}//${window.location.hostname}:21380`
+  return [
+    { key: 'clash', label: 'Clash', url: `${base}/clash${q}`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full' },
+    { key: 'singbox', label: 'Sing-box', url: `${base}/singbox${q}`, desc: 'Sing-box JSON', icon: 'mdi-cube-outline' },
+    { key: 'base64', label: 'Base64', url: `${base}/base64${q}`, desc: '通用 Base64 订阅', icon: 'mdi-code-braces' },
+  ]
+})
+
+async function loadExtToken() {
+  try {
+    const res: any = await getExtAccess()
+    extToken.value = (res.data?.data ?? res.data)?.token ?? ''
+  } catch (e) {
+    console.warn('[Dashboard] extaccess token', e)
+  }
+}
 
 // MD3：使用不同容器色阶区分，而不是四种高饱和糖果色
 const overview = computed(() => [
@@ -269,6 +288,7 @@ onMounted(() => {
   fetchStats()
   fetchTraffic()
   fetchObservability()
+  loadExtToken()
 })
 </script>
 
@@ -483,6 +503,11 @@ onMounted(() => {
       <div class="card-head">
         <v-icon icon="mdi-link-variant" size="20" class="mr-2" style="color: rgb(var(--v-theme-on-surface-variant))" />
         <span class="md3-title-medium">订阅链接</span>
+        <v-spacer />
+        <v-btn-toggle v-model="linkMode" mandatory density="compact" variant="outlined" color="primary">
+          <v-btn value="lan" size="small">局域网</v-btn>
+          <v-btn value="public" size="small">公网</v-btn>
+        </v-btn-toggle>
       </div>
       <div class="card-body">
         <div class="sub-grid">
@@ -499,7 +524,7 @@ onMounted(() => {
                 <span class="md3-title-small sub-name">{{ sub.label }}</span>
               </div>
               <div class="md3-body-small sub-desc">{{ sub.desc }}</div>
-              <div class="mono sub-url">{{ sub.url }}</div>
+              <div class="mono sub-url url-hidden">{{ sub.url }}</div>
               <v-btn
                 block
                 variant="flat"
@@ -862,6 +887,13 @@ onMounted(() => {
 }
 
 /* ── 订阅卡 ── */
+.sub-url.url-hidden {
+  filter: blur(5px);
+  transition: filter 0.15s ease;
+}
+.sub-card:hover .sub-url.url-hidden {
+  filter: none;
+}
 
 .sub-grid {
   display: grid;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
 import { getCFStatus, activateCF, deactivateCF, getCFAccounts, createCFAccount, updateCFAccount, deleteCFAccount, checkCFAccount, getCFSummary, setCFToken, getCFTokenStatus, getAccountUsage, type CFAccount, type CFSummary } from '../api/cf'
+import { getExtAccess } from '../api/extaccess'
 
 // ── activation ───────────────────────────────────────────────────────
 const activated = ref<boolean | null>(null) // null = loading
@@ -43,8 +44,12 @@ async function deactivate() {
 }
 
 function errMsg(e: unknown): string {
-  const anyE = e as { response?: { data?: { message?: string } } }
-  return anyE?.response?.data?.message || String(e)
+  // The API always reports failures as {"error": "..."} (see response.BadRequest
+  // & friends). Reading "message" here yielded undefined for every error, so the
+  // panel showed "AxiosError: Request failed with status code 400" and threw
+  // away the reason the server actually gave.
+  const anyE = e as { response?: { data?: { error?: string; message?: string } } }
+  return anyE?.response?.data?.error || anyE?.response?.data?.message || String(e)
 }
 
 // ── accounts ─────────────────────────────────────────────────────────
@@ -160,11 +165,26 @@ const resetText = computed(() => {
 // ── 订阅二维码 ──
 const qrDialog = ref(false)
 const qrDataUrl = ref('')
+// The subscription endpoints are token-gated whenever one is configured, so a
+// URL without it just returns 401. The other three places that print a
+// subscription link (Dashboard, FormatConfigs, ExtAccessCard) append it; this
+// one did not, which made the QR code a dead link.
+const extToken = ref('')
 const subUrl = computed(() => {
   const host = window.location.hostname
   const proto = window.location.protocol
-  return `${proto}//${host}:21380/clash`
+  const q = extToken.value ? `?token=${extToken.value}` : ''
+  return `${proto}//${host}:21380/clash${q}`
 })
+
+async function loadExtToken() {
+  try {
+    const res: any = await getExtAccess()
+    extToken.value = (res.data?.data ?? res.data)?.token ?? ''
+  } catch (e) {
+    console.warn('[CFPanel] extaccess token', e)
+  }
+}
 
 async function openQr() {
   qrDialog.value = true
@@ -233,6 +253,7 @@ async function checkAll() {
 }
 
 onMounted(async () => {
+  await loadExtToken()
   await loadStatus()
   if (activated.value) {
     await loadAccounts()

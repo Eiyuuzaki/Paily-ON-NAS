@@ -2,6 +2,8 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { getFormatConfig, updateFormatConfig } from '../api/formatConfigs'
 import type { FormatName } from '../api/formatConfigs'
+import { getExtAccess } from '../api/extaccess'
+import ExtAccessCard from '../components/ExtAccessCard.vue'
 import { copyText } from '../utils/clipboard'
 
 // 未注入 VITE_API_BASE 时按当前访问地址推导，显示完整链接而不是相对路径
@@ -12,10 +14,24 @@ const BASE =
     : '')
 
 const formats: FormatName[] = ['clash', 'singbox', 'base64']
-const subUrls: Record<FormatName, string> = {
-  clash: `${BASE}/clash`,
-  singbox: `${BASE}/singbox`,
-  base64: `${BASE}/base64`,
+const extToken = ref('')
+
+const subUrls = computed<Record<FormatName, string>>(() => {
+  const q = extToken.value ? `?token=${extToken.value}` : ''
+  return {
+    clash: `${BASE}/clash${q}`,
+    singbox: `${BASE}/singbox${q}`,
+    base64: `${BASE}/base64${q}`,
+  }
+})
+
+async function loadExtToken() {
+  try {
+    const res: any = await getExtAccess()
+    extToken.value = (res.data?.data ?? res.data)?.token ?? ''
+  } catch (e) {
+    console.warn('[FormatConfigs] extaccess token', e)
+  }
 }
 const formatLabels: Record<FormatName, string> = {
   clash: 'Clash',
@@ -108,7 +124,7 @@ function strVal(v: unknown): string {
 
 const currentConfigKeys = computed(() => Object.keys(tabs[activeTab.value].config))
 
-onMounted(() => loadTab('clash'))
+onMounted(() => { loadTab('clash'); loadExtToken() })
 </script>
 
 <template>
@@ -178,7 +194,7 @@ onMounted(() => loadTab('clash'))
             <div class="d-flex align-center ga-3 flex-wrap">
               <v-icon icon="mdi-link-variant" color="primary" />
               <span class="text-caption text-disabled">订阅链接</span>
-              <span class="mono text-caption">{{ subUrls[fmt] }}</span>
+              <span class="mono text-caption url-hidden">{{ subUrls[fmt] }}</span>
               <v-btn
                 size="small"
                 variant="tonal"
@@ -197,6 +213,8 @@ onMounted(() => loadTab('clash'))
         </v-window-item>
       </v-window>
     </v-card>
+
+<ExtAccessCard class="mt-4" />
 
     <v-snackbar :model-value="!!snack" :color="snackColor" :timeout="2000" location="bottom">
       {{ snack }}
@@ -232,5 +250,12 @@ onMounted(() => loadTab('clash'))
 .mono :deep(textarea) {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
+}
+.url-hidden {
+  filter: blur(5px);
+  transition: filter 0.15s ease;
+}
+.link-row:hover .url-hidden, .url-hidden:hover {
+  filter: none;
 }
 </style>
