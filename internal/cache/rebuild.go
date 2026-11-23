@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"sort"
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
@@ -364,37 +365,65 @@ func Rebuild(ctx context.Context, db *gorm.DB, cfg *config.Config, c *AliveCache
 		newTags[tag] = &tagSubCache{entries: entries, byRegion: byRegion}
 	}
 
-	// ── Phase C: global view (tag="") ─────────────────────────────────────
-	// Union of all per-tag entries; per-node score = nodes.score (global AVG).
+	newTags[""] = mergeGlobal(newTags, tagSet, nodeByID)
+
+	// ── Phase D: atomic swap ──────────────────────────────────────────────
+	c.swap(newTags)
+	log.Info().
+		Int("total", len(newTags[""].entries)).
+		Int("tags", len(tagSet)).
+		Msg("cache: rebuild complete")
+	return nil
+}
+
+// mergeGlobal builds the global (tag="") view: the union of every per-tag
+// entry, with the score replaced by the pool-wide average.
+//
+// Which tag's copy represents a node must not depend on map iteration order.
+// tagSet always contains "default", which normally has no deep rows, so when
+// two tags disagreed the unlock flags (StreamingResult) a client saw for one
+// node changed from rebuild to rebuild and it flickered in and out of
+// filter_unlock subscriptions. Tags are therefore walked in sorted order and a
+// copy carrying deep evidence wins over one that has none.
+func mergeGlobal(newTags map[string]*tagSubCache, tagSet map[string]struct{}, nodeByID map[uuid.UUID]*model.Node) *tagSubCache {
 	globalEntries := make(map[uuid.UUID]*NodeCacheEntry)
+	tags := make([]string, 0, len(tagSet))
 	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	for _, tag := range tags {
 		for id, e := range newTags[tag].entries {
-			if _, exists := globalEntries[id]; !exists {
-				cp := *e // copy entry; override score with the global AVG
-				if n, ok := nodeByID[id]; ok {
-					cp.Score = n.Score
-				}
-				globalEntries[id] = &cp
+			cur, exists := globalEntries[id]
+			if exists && (hasDeepEvidence(cur) || !hasDeepEvidence(e)) {
+				continue
 			}
+			cp := *e // copy entry; override score with the global AVG
+			if n, ok := nodeByID[id]; ok {
+				cp.Score = n.Score
+			}
+			globalEntries[id] = &cp
 		}
 	}
-	globalByRegion := make(map[string][]*NodeCacheEntry)
+	byRegion := make(map[string][]*NodeCacheEntry)
 	for _, e := range globalEntries {
 		region := e.Region
 		if region == "" {
 			region = "unknown"
 		}
-		globalByRegion[region] = append(globalByRegion[region], e)
+		byRegion[region] = append(byRegion[region], e)
 	}
-	newTags[""] = &tagSubCache{entries: globalEntries, byRegion: globalByRegion}
+	return &tagSubCache{entries: globalEntries, byRegion: byRegion}
+}
 
-	// ── Phase D: atomic swap ──────────────────────────────────────────────
-	c.swap(newTags)
-	log.Info().
-		Int("total", len(globalEntries)).
-		Int("tags", len(tagSet)).
-		Msg("cache: rebuild complete")
-	return nil
+// hasDeepEvidence reports whether an entry carries anything that only a deep
+// check can produce: unlock flags or a measured speed. Used to decide which
+// per-tag copy represents a node in the global view.
+func hasDeepEvidence(e *NodeCacheEntry) bool {
+	if e == nil {
+		return false
+	}
+	return len(e.StreamingResult) > 0 || e.SpeedKbps > 0
 }
 
 // decodeStreaming parses a JSON streaming result string into map[string]bool.
