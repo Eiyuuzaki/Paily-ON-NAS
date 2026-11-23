@@ -65,7 +65,7 @@ const PUBLIC_HOST = 'https://sub.lencf.dpdns.org'
 
 // 订阅链接带访问 token：无 token 的链接在开启鉴权后是 401 死链
 const subscriptions = computed(() => {
-  const q = extToken.value ? `?token=${extToken.value}` : ''
+  const q = extToken.value ? `?token=${encodeURIComponent(extToken.value)}` : ''
   const base = linkMode.value === 'public' ? PUBLIC_HOST : `${window.location.protocol}//${window.location.hostname}:21380`
   return [
     { key: 'clash', label: 'Clash', url: `${base}/clash${q}`, desc: 'Clash / Mihomo YAML', icon: 'mdi-shield-half-full' },

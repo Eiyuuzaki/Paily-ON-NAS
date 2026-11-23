@@ -17,7 +17,7 @@ const formats: FormatName[] = ['clash', 'singbox', 'base64']
 const extToken = ref('')
 
 const subUrls = computed<Record<FormatName, string>>(() => {
-  const q = extToken.value ? `?token=${extToken.value}` : ''
+  const q = extToken.value ? `?token=${encodeURIComponent(extToken.value)}` : ''
   return {
     clash: `${BASE}/clash${q}`,
     singbox: `${BASE}/singbox${q}`,

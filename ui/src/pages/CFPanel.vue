@@ -173,7 +173,7 @@ const extToken = ref('')
 const subUrl = computed(() => {
   const host = window.location.hostname
   const proto = window.location.protocol
-  const q = extToken.value ? `?token=${extToken.value}` : ''
+  const q = extToken.value ? `?token=${encodeURIComponent(extToken.value)}` : ''
   return `${proto}//${host}:21380/clash${q}`
 })
 

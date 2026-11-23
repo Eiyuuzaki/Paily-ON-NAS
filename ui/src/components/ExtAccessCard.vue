@@ -29,11 +29,12 @@ const lanBase = computed(() => `http://${window.location.hostname || 'localhost'
 
 const linkRows = computed(() => {
   const tok = info.value?.token ?? ''
+  const q = tok ? `?token=${encodeURIComponent(tok)}` : ''
   const base = mode.value === 'lan' ? lanBase.value : `https://${info.value?.public_host ?? 'sub.lencf.dpdns.org'}`
   return [
-    { key: 'clash', label: 'Clash', url: `${base}/clash?token=${tok}` },
-    { key: 'singbox', label: 'Sing-box', url: `${base}/singbox?token=${tok}` },
-    { key: 'base64', label: 'Base64', url: `${base}/base64?token=${tok}` },
+    { key: 'clash', label: 'Clash', url: `${base}/clash${q}` },
+    { key: 'singbox', label: 'Sing-box', url: `${base}/singbox${q}` },
+    { key: 'base64', label: 'Base64', url: `${base}/base64${q}` },
   ]
 })
 
