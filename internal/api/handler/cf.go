@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cfhealth"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/gin-gonic/gin"
@@ -229,33 +230,12 @@ func (h *CFHandler) CheckAccount(c *gin.Context) {
 	// 健康判定 = 节点池聚合（语义正确：号是节点池的容器，节点活即号活）。
 	// 直连 WorkerURL 探测在 SNI 黑名单时代不可信（GFW 封 workers.dev/dpdns.org，
 	// 客户端走 ECH 能通但直连必 RST），只作辅助信号。
-	// An empty worker URL would turn the LIKE pattern into '%%' and count every
-	// node in the pool as belonging to this account.
-	host := extractWorkerHost(row.WorkerURL)
-	if host == "" {
+	// 规则本身在 cfhealth 包里：checker 每轮用同一个函数刷新，避免两处口径漂移。
+	health, aliveCnt, totalCnt, err := cfhealth.Compute(h.db.WithContext(c), row.WorkerURL)
+	if err != nil {
+		// 空 worker_url 会让 LIKE 变成 '%%'，把整池节点算到这个号头上。
 		response.BadRequest(c, "worker_url is not configured for this account")
 		return
-	}
-	pattern := "%" + host + "%"
-	var aliveCnt, totalCnt int64
-	if err := h.db.WithContext(c).Model(&model.Node{}).
-		Where("archived_at IS NULL AND raw LIKE ?", pattern).
-		Count(&totalCnt).Error; err != nil {
-		response.InternalError(c, "failed to count nodes")
-		return
-	}
-	if err := h.db.WithContext(c).Model(&model.Node{}).
-		Where("archived_at IS NULL AND alive = true AND raw LIKE ?", pattern).
-		Count(&aliveCnt).Error; err != nil {
-		response.InternalError(c, "failed to count alive nodes")
-		return
-	}
-	health := "down"
-	if aliveCnt > 0 {
-		health = "ok"
-		if aliveCnt < totalCnt {
-			health = "degraded"
-		}
 	}
 	now := time.Now()
 	if err := h.db.WithContext(c).Model(&row).
@@ -263,17 +243,7 @@ func (h *CFHandler) CheckAccount(c *gin.Context) {
 		response.InternalError(c, "failed to record health")
 		return
 	}
-	response.OK(c, gin.H{"id": id, "health": health, "checked_at": now})
-}
-
-// extractWorkerHost pulls the host part of a worker URL for node raw matching.
-func extractWorkerHost(workerURL string) string {
-	s := strings.TrimPrefix(workerURL, "https://")
-	s = strings.TrimPrefix(s, "http://")
-	if i := strings.IndexAny(s, "/:"); i >= 0 {
-		s = s[:i]
-	}
-	return s
+	response.OK(c, gin.H{"id": id, "health": health, "node_alive": aliveCnt, "node_total": totalCnt, "checked_at": now})
 }
 
 // Summary handles GET /api/v1/cf/summary - aggregates pool stats,
@@ -557,10 +527,13 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 			FetchedAt time.Time       `json:"fetched_at"`
 			Payload   json.RawMessage `json:"payload"`
 		}
+		// A cached entry we cannot decode is not a usable reading: fall through and
+		// refetch instead of handing back a nil payload.
 		if !force && json.Unmarshal([]byte(cached), &entry) == nil && time.Since(entry.FetchedAt) < 5*time.Minute {
 			var payload map[string]any
-			json.Unmarshal(entry.Payload, &payload)
-			return payload, nil
+			if json.Unmarshal(entry.Payload, &payload) == nil && payload != nil {
+				return payload, nil
+			}
 		}
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
@@ -576,7 +549,19 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 			ID string `json:"id"`
 		} `json:"result"`
 	}
-	json.NewDecoder(resp.Body).Decode(&accts)
+	// Both decodes here used to ignore their errors. A failed parse left the
+	// struct zeroed, which downstream became total_today = 0, which was cached
+	// and then read by cfquota.Exhausted as "this account is fine" — putting a
+	// fleet that has actually spent its quota back into the subscription, where
+	// every entry answers 429. An unreadable reading is not evidence of zero
+	// usage, so it has to be an error.
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cf accounts API returned %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&accts); err != nil {
+		resp.Body.Close()
+		return nil, fmt.Errorf("decode CF accounts: %w", err)
+	}
 	resp.Body.Close()
 	if len(accts.Result) == 0 {
 		return nil, errors.New("token has no account access")
@@ -595,7 +580,13 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 		return nil, fmt.Errorf("call CF GraphQL: %w", err)
 	}
 	defer gresp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(gresp.Body, 16384))
+	if gresp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CF GraphQL returned %d", gresp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(gresp.Body, 16384))
+	if err != nil {
+		return nil, fmt.Errorf("read CF GraphQL response: %w", err)
+	}
 
 	var gresp2 struct {
 		Data struct {
@@ -612,15 +603,29 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 				} `json:"accounts"`
 			} `json:"viewer"`
 		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
-	json.Unmarshal(body, &gresp2)
+	if err := json.Unmarshal(body, &gresp2); err != nil {
+		return nil, fmt.Errorf("decode CF GraphQL: %w", err)
+	}
+	// GraphQL reports failures as a top-level "errors" array with HTTP 200, so a
+	// status check alone is not enough.
+	if len(gresp2.Errors) > 0 {
+		return nil, fmt.Errorf("CF GraphQL error: %s", gresp2.Errors[0].Message)
+	}
+	// An account that simply used nothing today still comes back as one entry
+	// with an empty hour list — that is a real zero. No account entry at all
+	// means the query did not answer, which must not be cached as zero usage.
+	if len(gresp2.Data.Viewer.Accounts) == 0 {
+		return nil, errors.New("CF GraphQL returned no account data")
+	}
 	hourly := []gin.H{}
 	total := int64(0)
-	if len(gresp2.Data.Viewer.Accounts) > 0 {
-		for _, u := range gresp2.Data.Viewer.Accounts[0].WorkersInvocationsAdaptive {
-			hourly = append(hourly, gin.H{"hour": u.Dimensions.DatetimeHour, "requests": u.Sum.Requests})
-			total += u.Sum.Requests
-		}
+	for _, u := range gresp2.Data.Viewer.Accounts[0].WorkersInvocationsAdaptive {
+		hourly = append(hourly, gin.H{"hour": u.Dimensions.DatetimeHour, "requests": u.Sum.Requests})
+		total += u.Sum.Requests
 	}
 	payload := gin.H{
 		"total_today": total,

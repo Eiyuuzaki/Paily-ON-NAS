@@ -13,6 +13,7 @@ import (
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/middleware"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/cfhealth"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cfquota"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/checkqueue"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
@@ -635,6 +636,16 @@ WHERE n.id = d.node_id
 
 		// ── Phase 4: dead-source evaluation + cache rebuild ───────────────
 		h.handleDeadNodes(ctx, deadIDs)
+
+		// CF 号的 health 是节点池的派生量：这一轮 alive 已定，顺手刷新，面板就不必
+		// 依赖有人按「探活」。纯本地 SQL（每号两条 COUNT），不发网络请求，也不吃
+		// Worker 配额，所以可以每轮都跑。
+		if n, err := cfhealth.RefreshAll(ctx, h.db); err != nil {
+			log.Warn().Err(err).Msg("checker: cf account health refresh failed")
+		} else if n > 0 {
+			log.Info().Int("accounts", n).Msg("checker: cf account health refreshed")
+		}
+
 		h.cache.TriggerRebuild(ctx)
 
 		log.Info().Str("tag", tag).Str("run_id", checkRunID.String()).
