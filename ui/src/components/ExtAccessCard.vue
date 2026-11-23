@@ -21,7 +21,11 @@ const testResult = ref<ExtTestResult | null>(null)
 const copiedKey = ref('')
 const mode = ref<'public' | 'lan'>('public')
 
-const lanBase = computed(() => `http://${window.location.hostname || '192.168.31.208'}:${info.value?.lan_port ?? 21380}`)
+// Do not hardcode the NAS address here: this file is committed, and a LAN IP in a
+// public source tree is an internal detail that does not belong in it. In a
+// browser window.location.hostname is always set, so the fallback only covers
+// non-browser contexts.
+const lanBase = computed(() => `http://${window.location.hostname || 'localhost'}:${info.value?.lan_port ?? 21380}`)
 
 const linkRows = computed(() => {
   const tok = info.value?.token ?? ''
