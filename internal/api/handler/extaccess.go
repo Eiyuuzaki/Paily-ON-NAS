@@ -205,7 +205,7 @@ func (h *ExtAccessHandler) Test(c *gin.Context) {
 	client := &http.Client{Timeout: 20 * time.Second}
 	start := time.Now()
 	req, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodGet,
-		"https://"+host+"/clash?token="+tok, nil)
+		"https://"+host+"/clash?token="+url.QueryEscape(tok), nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		response.OK(c, gin.H{
