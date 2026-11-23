@@ -4,14 +4,63 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// numericConfigRules bounds the config keys that drive a duration or a
+// cleanup cutoff. Both failure modes are silent until they hurt:
+//
+//   - a NEGATIVE window moves the cutoff into the FUTURE (now.AddDate(0,0,-(-5))
+//     is five days ahead), so the next prune deletes the entire table;
+//   - a NON-POSITIVE cleanup interval panics time.NewTicker, and it is called
+//     from a background goroutine with no recover, so the whole process dies.
+//
+// allowZero is true where 0 is the documented way to disable a rule.
+var numericConfigRules = []struct {
+	key       string
+	allowZero bool
+}{
+	{"cleanup_interval_minutes", false},
+	{"fetch_history_window_days", true},
+	{"fetch_dead_window_days", true},
+	{"check_run_history_days", true},
+	{"node_dead_window_days", true},
+	{"node_never_alive_retention_days", true},
+	{"node_dead_retention_days", true},
+	{"node_exhausted_archive_hours", true},
+	{"node_never_alive_min_checks", true},
+	{"node_exhausted_min_checks", true},
+}
+
+// validateNumericConfigs rejects unparsable, negative, or (where required)
+// non-positive values for the keys in numericConfigRules. Only keys present in
+// the request are checked; untouched keys keep whatever the DB already holds.
+func validateNumericConfigs(incoming map[string]string) error {
+	for _, rule := range numericConfigRules {
+		v, present := incoming[rule.key]
+		if !present {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("config %q must be an integer, got %q", rule.key, v)
+		}
+		if n < 0 {
+			return fmt.Errorf("config %q must not be negative: a negative window moves the cleanup cutoff into the future and would delete every row", rule.key)
+		}
+		if !rule.allowZero && n == 0 {
+			return fmt.Errorf("config %q must be greater than zero", rule.key)
+		}
+	}
+	return nil
+}
 
 // windowConstraints lists pairs where the history (cleanup) window must be >=
 // the dead-evaluation window so the cleanup goroutine never deletes records
@@ -97,6 +146,10 @@ func (h *ConfigHandler) Update(c *gin.Context) {
 	var validationErr error
 	now := time.Now()
 	txErr := h.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
+		if err := validateNumericConfigs(req); err != nil {
+			validationErr = err
+			return err
+		}
 		if err := validateWindowConstraints(tx, req); err != nil {
 			validationErr = err
 			return err
