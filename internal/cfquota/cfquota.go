@@ -19,6 +19,7 @@ package cfquota
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -44,13 +45,41 @@ type payload struct {
 	QuotaDaily int64 `json:"quota_daily"`
 }
 
+// utcDayStart is 00:00 UTC of the day now falls in. Workers quota resets at
+// that boundary, so a reading taken before it cannot describe today.
+func utcDayStart(now time.Time) time.Time {
+	y, m, d := now.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// parseFetchedAt reads the timestamp the writer stored. Mirrors time.Time's
+// default JSON encoding; ok is false when the value is absent or unreadable.
+func parseFetchedAt(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return ts, true
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts, true
+	}
+	return time.Time{}, false
+}
+
 // Exhausted reports the accounts whose daily quota is spent.
 //
-// An account with no cached reading, an unparsable one, or a non-positive
-// quota is treated as NOT exhausted. The filter only ever removes nodes, so an
-// unknown account must keep its nodes in the pool: wrongly hiding a working
-// fleet is worse than briefly showing one that is out of quota, and the refresh
-// loop fills the gap within one interval anyway.
+// An account with no cached reading, an unparsable one, a reading that is not
+// from the current UTC day, or a non-positive quota is treated as NOT
+// exhausted. The filter only ever removes nodes, so an unknown account must
+// keep its nodes in the pool: wrongly hiding a working fleet is worse than
+// briefly showing one that is out of quota, and the refresh loop fills the gap
+// within one interval anyway.
+//
+// The day check exists because FetchedAt used to be written and never read:
+// once an account was recorded as over quota it stayed filtered indefinitely,
+// through the UTC reset and through any length of refresh failure, until
+// somebody edited the configs row by hand.
 func Exhausted(db *gorm.DB) map[uuid.UUID]struct{} {
 	out := make(map[uuid.UUID]struct{})
 	var rows []struct {
@@ -65,9 +94,13 @@ func Exhausted(db *gorm.DB) map[uuid.UUID]struct{} {
 			" WHERE a.enabled = true").Scan(&rows).Error; err != nil {
 		return out
 	}
+	dayStart := utcDayStart(time.Now())
 	for _, r := range rows {
 		var e entry
 		if json.Unmarshal([]byte(r.Value), &e) != nil || len(e.Payload) == 0 {
+			continue
+		}
+		if ts, ok := parseFetchedAt(e.FetchedAt); !ok || ts.Before(dayStart) {
 			continue
 		}
 		var p payload
