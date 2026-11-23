@@ -34,10 +34,11 @@ const KEY_LABELS: Record<string, string> = {
   filename_base64: 'Base64 配置文件名',
   score_latency_curve_k: '延迟评分对数衰减曲线斜率 (k)',
   score_jitter_linear_threshold_ms: '抖动线性阈值 (ms)',
+  score_max_latency_ms: '延迟归一化锚点 (ms)',
+  score_max_jitter_ms: '抖动归一化锚点 (ms)',
   node_distribute_filter: '分发过滤器（expr-lang，返回 true 则不分发）',
   node_alive_check_window_minutes: '存活联合评价窗口（分钟，0=单次提交即决定）',
   check_run_history_days: 'Checker 提交记录最大历史天数',
-  priority_ratio: '机场节点占比（0~1，越高机场节点越多）',
   check_rep_per_server: '每入口每轮探测代表数（0=全量）',
   check_rep_min_group: '小源全测阈值（活节点数≤此值不抽代表）',
   ingress_max_new_per_source: '免费源每轮新节点上限（0=不限）',
@@ -46,11 +47,15 @@ const KEY_LABELS: Record<string, string> = {
   ingress_backlog_soft_cap: '积压超起始值后每轮新节点上限',
   ingress_backlog_hard_cap: '积压超重度阈值后每轮新节点上限',
   node_dead_retention_days: '死透归档保留天数（0=不归档）',
+  node_exhausted_archive_hours: '曾成功过、此后持续失败多少小时后归档',
+  node_exhausted_min_checks: '归档前至少被测过的次数',
   cf_per_worker_max: '每地区·每个 CF Worker 最多入口数',
   region_other_max: '每地区·非 CF 节点上限',
   dist_allow_paid_selfsigned: '允许付费/最高来源使用自签证书',
   dist_allow_plaintext: '允许明文 HTTP/SOCKS 代理（危险）',
   dist_selfsigned_fallback: '自签兜底策略',
+  dist_per_path_max: '同一路径最多分发数',
+  dist_require_ipv4: '只分发有 A 记录的入口（0=不限制）',
   cf_module: 'Cloudflare 号池模块（1=开 / 0=关）',
   ech_enabled: '启用 ECH 注入（1=开 / 0=关）',
   check_dead_probation_hours: '新节点全测窗口（小时，超龄后按轮转档位探测）',
@@ -189,7 +194,7 @@ const normalKeys = computed(() =>
     (KEY_LABELS[k] ?? '').includes(search.value))),
 )
 
-// 把 priority_ratio 这类 0~1 的键渲染成滑杆
+// 把 0~1 的键渲染成滑杆
 const RATIO_KEYS = ['score_decay_alpha', 'score_weight_latency', 'score_weight_stability', 'score_weight_speed']
 
 onMounted(loadConfig)
