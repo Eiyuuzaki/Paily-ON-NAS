@@ -163,24 +163,24 @@ func (h *Handler) Distribute(
 		`SELECT worker_id, state FROM worker_health WHERE state <> 'healthy'`).Scan(&workerStates).Error; err != nil {
 		log.Warn().Err(err).Msg("distribution: worker health query failed (treating as healthy)")
 	}
+	// Apply the breaker per Worker, never pool-wide. worker_health is keyed by
+	// Worker SNI, so a node belongs to a Worker only when it presents that SNI.
+	// The previous code removed every node whose name began with CF- as soon as
+	// ANY Worker opened, and zeroed the pool-wide cfPerWorker: one bad Worker
+	// emptied the self-built pool from every subscription while the nodes behind
+	// healthy Workers were still fine.
+	openWorkers := make(map[string]struct{}, len(workerStates))
+	throttledWorkers := make(map[string]struct{}, len(workerStates))
 	for _, w := range workerStates {
 		switch w.State {
 		case "open":
-			// Aggregate failure ongoing: CF nodes out of the subscription entirely.
-			filtered := candidates[:0]
-			for _, e := range candidates {
-				if !isCFNode(e.Raw) {
-					filtered = append(filtered, e)
-				}
-			}
-			candidates = filtered
-			cfPerWorker = 0
+			openWorkers[w.WorkerID] = struct{}{}
 		case "degraded", "half_open":
-			// Recovering or borderline: keep one CF representative per region so a
-			// future recovery is still visible in the subscription.
-			cfPerWorker = 1
+			throttledWorkers[w.WorkerID] = struct{}{}
 		}
 	}
+
+	candidates = applyWorkerBreaker(candidates, openWorkers, throttledWorkers)
 	allowPaid := configInt(h.db, "dist_allow_paid_selfsigned", 1) != 0
 	allowPlain := configInt(h.db, "dist_allow_plaintext", 0) != 0
 	fallback := configString(h.db, "dist_selfsigned_fallback", "short")

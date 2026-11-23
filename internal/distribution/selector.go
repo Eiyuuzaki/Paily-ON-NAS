@@ -83,6 +83,71 @@ func egressIdentity(e *cache.NodeCacheEntry) string {
 	return "srv:" + e.Server
 }
 
+// entrySNI returns the servername an entry presents. That is the Worker
+// identity worker_health is keyed on, so it is what the breaker must match
+// against. Unlike egressIdentity this never falls back to the server: a node
+// belongs to a Worker only when it actually presents that SNI.
+func entrySNI(e *cache.NodeCacheEntry) string {
+	if e == nil || e.ProxyNode == nil {
+		return ""
+	}
+	m := e.ProxyNode.ClashMap()
+	if sni, _ := m["servername"].(string); sni != "" {
+		return sni
+	}
+	if sni, _ := m["sni"].(string); sni != "" {
+		return sni
+	}
+	return ""
+}
+
+// applyWorkerBreaker enforces per-Worker breaker state on a candidate list.
+//
+// A Worker is identified by the SNI it presents, which is what worker_health
+// is keyed on. open Workers lose all their entries; degraded/half_open ones
+// keep a single representative per (Worker, region) so a recovery stays
+// visible. Workers named in neither set are untouched — the breaker is an
+// account-level fact and must never act pool-wide. The earlier pool-wide
+// version dropped every CF- node as soon as one Worker opened.
+func applyWorkerBreaker(candidates []*cache.NodeCacheEntry, openWorkers, throttledWorkers map[string]struct{}) []*cache.NodeCacheEntry {
+	if len(openWorkers) == 0 && len(throttledWorkers) == 0 {
+		return candidates
+	}
+	out := make([]*cache.NodeCacheEntry, 0, len(candidates))
+	for _, e := range candidates {
+		if _, isOpen := openWorkers[entrySNI(e)]; isOpen {
+			continue
+		}
+		out = append(out, e)
+	}
+	if len(throttledWorkers) == 0 {
+		return out
+	}
+	best := make(map[string]*cache.NodeCacheEntry)
+	for _, e := range out {
+		sni := entrySNI(e)
+		if _, throttled := throttledWorkers[sni]; !throttled {
+			continue
+		}
+		key := sni + "|" + e.Region
+		if cur, seen := best[key]; !seen || e.Score > cur.Score {
+			best[key] = e
+		}
+	}
+	kept := make([]*cache.NodeCacheEntry, 0, len(out))
+	for _, e := range out {
+		sni := entrySNI(e)
+		if _, throttled := throttledWorkers[sni]; !throttled {
+			kept = append(kept, e)
+			continue
+		}
+		if best[sni+"|"+e.Region] == e {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
 // capByEgress keeps at most perEgressCap nodes per egress identity,
 // preferring the highest-scoring ones. Input order is preserved otherwise.
 func capByEgress(entries []*cache.NodeCacheEntry) []*cache.NodeCacheEntry {
