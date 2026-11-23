@@ -15,28 +15,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
-	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"gorm.io/gorm"
 )
 
 // individualProxyTypes are the proxy types that represent individual nodes
 // (not proxy groups). Proxy groups have types like "select", "url-test", etc.
 var individualProxyTypes = map[string]bool{
-	"vless":    true,
-	"vmess":    true,
-	"ss":       true,
-	"trojan":   true,
-	"http":     true,
-	"socks5":   true,
-	"socks":    true,
+	"vless":     true,
+	"vmess":     true,
+	"ss":        true,
+	"trojan":    true,
+	"http":      true,
+	"socks5":    true,
+	"socks":     true,
 	"hysteria2": true,
-	"tuic":     true,
-	"anytls":   true,
-	"snell":    true,
-	"hysteria": true,
-	"ssr":      true,
+	"wireguard": true,
+	"tuic":      true,
+	"anytls":    true,
+	"snell":     true,
+	"hysteria":  true,
+	"ssr":       true,
 }
 
 // mihomoProxy is the subset of mihomo's proxy object we care about.
@@ -121,9 +122,9 @@ func (r *Reporter) fetchAndStore(ctx context.Context) {
 		if !individualProxyTypes[proxy.Type] {
 			continue // skip proxy groups
 		}
-		if proxy.Upload + proxy.Download == 0 {
+		if proxy.Upload+proxy.Download == 0 {
 			continue
-	}
+		}
 
 		key := fmt.Sprintf("%s:%d:%s", proxy.Server, proxy.Port, proxy.Type)
 		nodeID, ok := nodeMap[key]
@@ -184,13 +185,9 @@ func (r *Reporter) fetchAndStore(ctx context.Context) {
 	for sid, stats := range trafficBySource {
 		stats.RecordedAt = now
 
-		// 先读出上一轮快照，用于计算增量。必须在覆写之前读。
-		var prev model.SourceTrafficStat
-		hasPrev := r.db.WithContext(ctx).
-			Where("source_id = ?", sid).
-			Order("recorded_at DESC").
-			Limit(1).
-			Find(&prev).Error == nil && prev.ID != 0
+		// This snapshot is intentionally separate from source_traffic_daily: the
+		// latter is the airport subscription-userinfo ledger, while this is
+		// mihomo bytes through this host. Mixing them would double-count.
 
 		// 覆写快照。
 		if err := r.db.WithContext(ctx).
@@ -204,66 +201,13 @@ func (r *Reporter) fetchAndStore(ctx context.Context) {
 			continue
 		}
 
-		// 累加当日增量。
-		if err := r.addDailyDelta(ctx, sid, now, prev, hasPrev, stats); err != nil {
-			log.Warn().Err(err).Str("source_id", sid.String()).Msg("traffic reporter: failed to store daily delta")
-		}
+		// Do not write source_traffic_daily here. If measured-traffic history is
+		// needed later, it needs a separate ledger with a distinct meaning.
 	}
 
 	log.Info().
 		Int("sources", len(trafficBySource)).
 		Msg("traffic reporter: stats stored")
-}
-
-// addDailyDelta 把「本轮累计值 - 上轮累计值」累加到当天的聚合行上。
-//
-// 为什么要增量而不是直接存累计值：mihomo 的计数器会随重启归零，
-// 如果每天存累计值，重启那天会突然变小，按范围求和就失去意义。
-// 存增量则重启只会丢掉「重启前最后一段未采集的部分」，历史不受影响。
-//
-// 负数增量的两种情况都按「计数器归零后重新累加」处理，即直接用当前值：
-//   - mihomo 重启，计数器从 0 开始
-//   - 上一轮之后没有流量，但读者预期不应出现负数
-func (r *Reporter) addDailyDelta(
-	ctx context.Context,
-	sid uuid.UUID,
-	now time.Time,
-	prev model.SourceTrafficStat,
-	hasPrev bool,
-	cur *model.SourceTrafficStat,
-) error {
-	var dUp, dDown int64
-	if hasPrev {
-		dUp = cur.Upload - prev.Upload
-		dDown = cur.Download - prev.Download
-		if dUp < 0 {
-			dUp = cur.Upload
-		}
-		if dDown < 0 {
-			dDown = cur.Download
-		}
-	} else {
-		// 首次采集：把当前累计值整体记为今天的量。
-		dUp = cur.Upload
-		dDown = cur.Download
-	}
-
-	if dUp == 0 && dDown == 0 {
-		return nil
-	}
-
-	// 用本地时区的日期做分组键，避免跨零点时按 UTC 分到前一天。
-	y, m, d := now.In(time.Local).Date()
-	day := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
-
-	return r.db.WithContext(ctx).Exec(`
-		INSERT INTO source_traffic_daily (source_id, day, upload, download, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (source_id, day) DO UPDATE SET
-			upload     = source_traffic_daily.upload   + EXCLUDED.upload,
-			download   = source_traffic_daily.download + EXCLUDED.download,
-			updated_at = EXCLUDED.updated_at
-	`, sid, day, dUp, dDown, now).Error
 }
 
 // fetchProxies queries the mihomo /proxies endpoint.
