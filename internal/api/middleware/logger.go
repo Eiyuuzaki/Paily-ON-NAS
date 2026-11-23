@@ -14,15 +14,11 @@ func Logger(verbose bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
 
 		c.Next()
 
 		status := c.Writer.Status()
 		latency := time.Since(start)
-		if query != "" {
-			path = path + "?" + query
-		}
 
 		if !verbose && (status < 400 || status == 404) {
 			return

@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -26,8 +28,9 @@ type SubscribeTokenManager struct {
 	db       *gorm.DB
 	yamlVal  string
 	mu       sync.RWMutex
-	cache    string
-	cachedAt time.Time
+	cache      string
+	cachedAt   time.Time
+	cacheValid bool
 }
 
 func NewSubscribeTokenManager(db *gorm.DB, yamlVal string) *SubscribeTokenManager {
@@ -48,9 +51,18 @@ func (m *SubscribeTokenManager) Get() string {
 
 	var stored string
 	res := m.db.Raw("SELECT value FROM configs WHERE key = ?", subscribeTokenKey).Scan(&stored)
-	if res.Error == nil && res.RowsAffected > 0 {
+	if res.Error != nil {
+		log.Error().Err(res.Error).Msg("subscribe token: config read failed")
+		m.mu.RLock()
+		valid, cached := m.cacheValid, m.cache
+		m.mu.RUnlock()
+		if valid { return cached }
+		if m.yamlVal != "" { return m.yamlVal }
+		return "unavailable-paily-token"
+	}
+	if res.RowsAffected > 0 {
 		m.mu.Lock()
-		m.cache, m.cachedAt = stored, time.Now()
+		m.cache, m.cachedAt, m.cacheValid = stored, time.Now(), true
 		m.mu.Unlock()
 		return stored
 	}
@@ -60,7 +72,7 @@ func (m *SubscribeTokenManager) Get() string {
 			subscribeTokenKey, m.yamlVal)
 	}
 	m.mu.Lock()
-	m.cache, m.cachedAt = m.yamlVal, time.Now()
+	m.cache, m.cachedAt, m.cacheValid = m.yamlVal, time.Now(), true
 	m.mu.Unlock()
 	return m.yamlVal
 }
@@ -73,7 +85,7 @@ func (m *SubscribeTokenManager) Set(tok string) error {
 		return err
 	}
 	m.mu.Lock()
-	m.cache, m.cachedAt = tok, time.Now()
+	m.cache, m.cachedAt, m.cacheValid = tok, time.Now(), true
 	m.mu.Unlock()
 	return nil
 }
@@ -89,9 +101,9 @@ func (m *SubscribeTokenManager) publicHost() string {
 
 func subURLs(host, token string) map[string]string {
 	return map[string]string{
-		"clash":   "https://" + host + "/clash?token=" + token,
-		"singbox": "https://" + host + "/singbox?token=" + token,
-		"base64":  "https://" + host + "/base64?token=" + token,
+		"clash":   "https://" + host + "/clash?token=" + url.QueryEscape(token),
+		"singbox": "https://" + host + "/singbox?token=" + url.QueryEscape(token),
+		"base64":  "https://" + host + "/base64?token=" + url.QueryEscape(token),
 	}
 }
 
