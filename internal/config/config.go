@@ -88,6 +88,11 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("auth.admin_password", "")
 	v.SetDefault("auth.service_secret", "")
 	v.SetDefault("auth.jwt_secret", "")
+	// subscribe_token needs the same treatment: AutomaticEnv only answers for
+	// keys viper already knows, and this one has no config-file presence in the
+	// shipped examples, so without a default PAILY_AUTH_SUBSCRIBE_TOKEN was
+	// silently ignored and the subscription fell back to unauthenticated.
+	v.SetDefault("auth.subscribe_token", "")
 
 	if err := v.ReadInConfig(); err != nil {
 		// A missing config file is only fatal when the path was specified
@@ -114,14 +119,14 @@ const minJWTSecretLen = 32
 // weakSecrets are placeholder values that ship in examples and docs. Accepting
 // them in production would leave the deployment wide open.
 var weakSecrets = map[string]bool{
-	"":                        true,
-	"change-me":               true,
-	"changeme":                true,
+	"":                         true,
+	"change-me":                true,
+	"changeme":                 true,
 	"change-me-admin-password": true,
 	"change-me-service-secret": true,
 	"change-me-checker-secret": true,
-	"password":                true,
-	"secret":                  true,
+	"password":                 true,
+	"secret":                   true,
 }
 
 // validate refuses an auth configuration that cannot authenticate anyone.
