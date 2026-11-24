@@ -8,10 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	ctxKeyAdminAuthed = "admin_authed"
-)
-
 // AdminJWTMiddleware validates the Bearer JWT for admin endpoints.
 // Requires the secret to be injected at server startup.
 func AdminJWTMiddleware(jwtSecret string) gin.HandlerFunc {
@@ -25,7 +21,6 @@ func AdminJWTMiddleware(jwtSecret string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
 			return
 		}
-		c.Set(ctxKeyAdminAuthed, true)
 		c.Next()
 	}
 }
@@ -56,7 +51,6 @@ func AdminOrServiceMiddleware(jwtSecret, serviceSecret string) gin.HandlerFunc {
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(token), []byte(serviceSecret)) == 1 {
-			c.Set(ctxKeyAdminAuthed, true)
 			c.Next()
 			return
 		}
@@ -64,7 +58,6 @@ func AdminOrServiceMiddleware(jwtSecret, serviceSecret string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
 			return
 		}
-		c.Set(ctxKeyAdminAuthed, true)
 		c.Next()
 	}
 }

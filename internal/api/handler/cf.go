@@ -521,7 +521,12 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 	// 5-min cache in configs table
 	var cached string
 	cacheKey := cfquota.CacheKey(id)
-	h.db.WithContext(ctx).Raw("SELECT value FROM configs WHERE key = ?", cacheKey).Scan(&cached)
+	// A cache read failure is a cache miss, not a wrong answer: fall through and
+	// fetch. Reported because a failing read here also means the 10s path is
+	// hitting the database on every subscription request.
+	if err := h.db.WithContext(ctx).Raw("SELECT value FROM configs WHERE key = ?", cacheKey).Scan(&cached).Error; err != nil {
+		log.Warn().Err(err).Str("account", id.String()).Msg("cf: usage cache read failed")
+	}
 	if cached != "" {
 		var entry struct {
 			FetchedAt time.Time       `json:"fetched_at"`
@@ -569,8 +574,25 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 	atag := accts.Result[0].ID
 	// 2) GraphQL: today totals + hourly
 	todayUTC := time.Now().UTC().Format("2006-01-02T00:00:00Z")
-	gqlQuery := fmt.Sprintf(`{ viewer { accounts(filter: {accountTag: "%s"}) { workersInvocationsAdaptive(limit: 24, filter: {datetime_geq: "%s"}) { dimensions { datetimeHour } sum { requests } } } } }`, atag, todayUTC)
-	gqlBody, _ := json.Marshal(map[string]string{"query": gqlQuery})
+	// Variables, not string interpolation: accountTag comes back from the CF API and
+	// must never be able to change the shape of the query text.
+	const gqlQuery = `query($tag: String!, $from: Time!) {
+	  viewer {
+	    accounts(filter: {accountTag: $tag}) {
+	      workersInvocationsAdaptive(limit: 24, filter: {datetime_geq: $from}) {
+	        dimensions { datetimeHour }
+	        sum { requests }
+	      }
+	    }
+	  }
+	}`
+	gqlBody, err := json.Marshal(map[string]any{
+		"query":     gqlQuery,
+		"variables": map[string]any{"tag": atag, "from": todayUTC},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode CF GraphQL request: %w", err)
+	}
 	gqlReq, _ := http.NewRequestWithContext(ctx, "POST",
 		"https://api.cloudflare.com/client/v4/graphql", bytes.NewReader(gqlBody))
 	gqlReq.Header.Set("Authorization", "Bearer "+token)
@@ -630,7 +652,10 @@ func (h *CFHandler) accountUsage(ctx context.Context, id uuid.UUID, force bool) 
 	payload := gin.H{
 		"total_today": total,
 		"quota_daily": 100000,
-		"percent":     float64(total) / 1000.0 / 100.0,
+		// 0-100, not a 0-1 fraction: divided by the quota and multiplied by 100.
+		// The old total/1000/100 divided by the quota only, so a full 100k day
+		// reported 1% instead of 100%.
+		"percent":     float64(total) * 100 / 100000,
 		"hourly":      hourly,
 		"account_tag": atag,
 	}
