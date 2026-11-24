@@ -259,7 +259,11 @@ func schedulingReadinessReasons(groups []pathQualityItem) []string {
 	production := 0
 	for _, group := range groups {
 		if group.ShadowClass != "production_candidate" {
-			production++
+			// Deliberately no production++ here. Counting a non-production group as
+			// production made the "no_production_candidates" reason below
+			// unreachable: an all-observation set reported only
+			// "non_production_groups_present" and hid the more fundamental fact
+			// that there was no usable path at all.
 			reasons = appendUnique(reasons, "non_production_groups_present")
 			continue
 		}

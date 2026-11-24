@@ -83,8 +83,13 @@ func validateWindowConstraints(db *gorm.DB, incoming map[string]string) error {
 			}
 			if v, inReq := incoming[key]; inReq {
 				n, err := strconv.Atoi(v)
-				if err != nil || n <= 0 {
-					return fmt.Errorf("config %q must be a positive integer", key)
+				// 0 is the documented way to disable these rules: all four window keys
+				// are marked allowZero in numericConfigRules. Rejecting 0 here made that
+				// impossible through PUT /api/v1/config, which is the only entry point -
+				// validateNumericConfigs accepted the value and this check then refused
+				// it, so the two validators disagreed about the same key.
+				if err != nil || n < 0 {
+					return fmt.Errorf("config %q must not be negative", key)
 				}
 				effective[key] = n
 			} else {
