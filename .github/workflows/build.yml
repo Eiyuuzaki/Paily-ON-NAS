@@ -23,6 +23,25 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      # 格式门禁。go build / vet / test 都不检查格式，所以三个全绿也可能一直
+      # 在欠格式债；加入前本项目已有 19 个文件不合规，从未被发现。
+      # third_party/ 是 inline 进来的上游 paily-fetch，保持与上游一致比格式统一更
+      # 重要，因此排除在外；那两个文件单独排期处理。
+      - name: gofmt
+        run: |
+          files=$(git ls-files '*.go' | grep -v '^third_party/' || true)
+          if [ -z "$files" ]; then
+            echo "no Go files to check"
+            exit 0
+          fi
+          unformatted=$(gofmt -l $files)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件格式不合规，请运行 gofmt -w 后重新提交："
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: all project files clean"
+
       - name: go build
         run: go build ./...
 
