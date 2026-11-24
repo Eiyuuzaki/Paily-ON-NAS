@@ -7,9 +7,9 @@ import "testing"
 // zero interval panics time.NewTicker in a goroutine with no recover.
 func TestValidateNumericConfigs(t *testing.T) {
 	cases := []struct {
-		name  string
-		key   string
-		val   string
+		name    string
+		key     string
+		val     string
 		wantErr bool
 	}{
 		{"zero interval rejected", "cleanup_interval_minutes", "0", true},

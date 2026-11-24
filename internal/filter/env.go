@@ -10,7 +10,7 @@ type SourceInfo struct {
 	Info       string
 	Status     string // "active" | "dead"
 	Content    string
-	Priority   int    // 0=公益, 1=机场/付费, 2=最高
+	Priority   int // 0=公益, 1=机场/付费, 2=最高
 }
 
 // NodeFilterEnv is the evaluation context for node filter expressions.

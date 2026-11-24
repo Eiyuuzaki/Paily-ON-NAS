@@ -16,8 +16,8 @@ import (
 // self-built node, which let them bypass the per-Worker cap and starve other
 // sources out of the region quotas (2026-11-17).
 type rawProxy struct {
-	Name          string `json:"name"`
-	TLS           bool   `json:"tls"`
+	Name           string `json:"name"`
+	TLS            bool   `json:"tls"`
 	SkipCertVerify bool   `json:"skip-cert-verify"`
 }
 

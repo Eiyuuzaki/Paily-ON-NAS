@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	sponsorPkg "github.com/Eiyuuzaki/paily-on-nas/internal/sponsor"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"gorm.io/gorm"
 )
 

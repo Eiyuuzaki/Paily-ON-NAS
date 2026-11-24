@@ -59,8 +59,8 @@ type Node struct {
 	// measurement. Inferred or borrowed data must never advance it: freshness has
 	// to describe what was actually observed on this node.
 	LastDirectCheckAt *time.Time `gorm:"index"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 	// ArchivedAt marks a node retired from probing. The row is kept so the
 	// unique hash index keeps blocking re-ingestion: sources republish the
 	// same dead endpoints every round, and a hard delete would re-admit them

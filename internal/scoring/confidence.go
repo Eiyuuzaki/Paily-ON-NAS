@@ -28,11 +28,11 @@ const (
 
 	// High needs two independent rounds inside the 6h window AND a reading from
 	// the last 2h, so the tier means "recent and repeated", not just "repeated".
-	confHighRounds     = 2
-	confHighWindowH    = 6
-	confHighFreshH     = 2
-	confMediumWindowH  = 6
-	confLowWindowH     = 24
+	confHighRounds    = 2
+	confHighWindowH   = 6
+	confHighFreshH    = 2
+	confMediumWindowH = 6
+	confLowWindowH    = 24
 )
 
 // RecomputeConfidence refreshes nodes.confidence for the whole alive pool from

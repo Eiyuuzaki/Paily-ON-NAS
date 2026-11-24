@@ -12,18 +12,19 @@ import "time"
 // Worker, not of any single node, so it gets its own table and its own breaker.
 //
 // Thresholds (approved 2026-11-18 after a 44-round historical replay):
-//   degraded: CF median eff > 1.5 x same-round airport-control median AND > 400ms
-//   open:     degraded condition met in 2 consecutive valid rounds
-//   recovery: half_open after 1 valid round with CF med <= 1.2x airport,
-//             healthy after 2 such consecutive rounds
+//
+//	degraded: CF median eff > 1.5 x same-round airport-control median AND > 400ms
+//	open:     degraded condition met in 2 consecutive valid rounds
+//	recovery: half_open after 1 valid round with CF med <= 1.2x airport,
+//	          healthy after 2 such consecutive rounds
 type WorkerHealth struct {
-	WorkerID    string     `gorm:"primaryKey;size:128"` // Worker SNI, e.g. lencf.dpdns.org
-	State       string     `gorm:"size:16;not null;default:'healthy'"`
-	ConsBad     int        `gorm:"not null;default:0"` // consecutive degraded-qualifying rounds
-	ConsGood    int        `gorm:"not null;default:0"` // consecutive recovery-qualifying rounds (half_open)
-	BaselineEff int        `gorm:"not null;default:0"` // last healthy median eff — monitoring only, not a trigger
+	WorkerID    string `gorm:"primaryKey;size:128"` // Worker SNI, e.g. lencf.dpdns.org
+	State       string `gorm:"size:16;not null;default:'healthy'"`
+	ConsBad     int    `gorm:"not null;default:0"` // consecutive degraded-qualifying rounds
+	ConsGood    int    `gorm:"not null;default:0"` // consecutive recovery-qualifying rounds (half_open)
+	BaselineEff int    `gorm:"not null;default:0"` // last healthy median eff — monitoring only, not a trigger
 	OpenedAt    *time.Time
-	UpdatedAt   time.Time  `gorm:"not null"`
+	UpdatedAt   time.Time `gorm:"not null"`
 }
 
 func (WorkerHealth) TableName() string { return "worker_health" }

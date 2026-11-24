@@ -63,10 +63,10 @@ func TestClassify(t *testing.T) {
 		airN  int
 		want  RoundKind
 	}{
-		{164, 30, 137, 10, RoundGood},   // ratio 1.2-ish: 164/137=1.20 -> good
-		{498, 30, 337, 10, RoundNormal}, // ratio 1.48 -> normal
-		{1203, 30, 147, 10, RoundBad},   // ratio 8.2 -> bad
-		{1500, 30, 3, 3, RoundInconclusive}, // airport under-sampled
+		{164, 30, 137, 10, RoundGood},          // ratio 1.2-ish: 164/137=1.20 -> good
+		{498, 30, 337, 10, RoundNormal},        // ratio 1.48 -> normal
+		{1203, 30, 147, 10, RoundBad},          // ratio 8.2 -> bad
+		{1500, 30, 3, 3, RoundInconclusive},    // airport under-sampled
 		{1500, 10, 300, 10, RoundInconclusive}, // CF under-sampled
 	}
 	for _, c := range cases {

@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // GetInitialChecks handles GET /api/v1/nodes/{id}/checks/initial.
