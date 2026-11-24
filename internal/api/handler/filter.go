@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/filter"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -83,7 +83,7 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 	var nodes []model.Node
 	if err := db.Select(
 		"id, server, protocol, password, hash, region, alive, score",
-	).Find(&nodes).Error; err != nil {
+	).Where("archived_at IS NULL").Find(&nodes).Error; err != nil {
 		return nil, err
 	}
 

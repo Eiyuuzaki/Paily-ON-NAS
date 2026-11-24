@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -46,7 +46,9 @@ type NodeListFilter struct {
 // List returns a filtered, paginated slice of nodes and the total count.
 func (s *Service) List(ctx context.Context, f NodeListFilter) ([]model.Node, int64, error) {
 	page, limit := normalise(f.Page, f.Limit)
-	q := s.db.WithContext(ctx).Model(&model.Node{})
+	// Archived nodes stay in the table so their hash keeps blocking re-ingestion.
+	// They are not part of the pool the list page is meant to show.
+	q := s.db.WithContext(ctx).Model(&model.Node{}).Where("archived_at IS NULL")
 
 	if f.Alive != nil {
 		q = q.Where("alive = ?", *f.Alive)
