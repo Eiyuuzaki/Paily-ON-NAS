@@ -110,12 +110,44 @@ func (h *CFHandler) ListAccounts(c *gin.Context) {
 	response.OK(c, gin.H{"data": rows})
 }
 
+// cfCreateAccountReq is the writable subset of a CF account.
+//
+// Binding model.CFAccount directly let a client set id, health, last_check_at and
+// created_at: BeforeCreate only fills the UUID when it is Nil, so an arbitrary id
+// was kept, and a forged health value fed straight into the quota filtering that
+// decides which accounts are eligible. UpdateAccount below already took this
+// whitelist approach; Create simply had not been converted.
+type cfCreateAccountReq struct {
+	Name       string `json:"name"`
+	Role       string `json:"role"`
+	WorkerURL  string `json:"worker_url"`
+	WorkerName string `json:"worker_name"`
+	Subdomain  string `json:"subdomain"`
+	UUID       string `json:"uuid"`
+	RepoURL    string `json:"repo_url"`
+	Note       string `json:"note"`
+	Enabled    *bool  `json:"enabled"`
+}
+
 // CreateAccount handles POST /api/v1/cf/accounts.
 func (h *CFHandler) CreateAccount(c *gin.Context) {
-	var req model.CFAccount
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var body cfCreateAccountReq
+	if err := c.ShouldBindJSON(&body); err != nil {
 		response.BadRequest(c, "invalid request body")
 		return
+	}
+	req := model.CFAccount{
+		Name:       body.Name,
+		Role:       body.Role,
+		WorkerURL:  body.WorkerURL,
+		WorkerName: body.WorkerName,
+		Subdomain:  body.Subdomain,
+		UUID:       body.UUID,
+		RepoURL:    body.RepoURL,
+		Note:       body.Note,
+	}
+	if body.Enabled != nil {
+		req.Enabled = *body.Enabled
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
