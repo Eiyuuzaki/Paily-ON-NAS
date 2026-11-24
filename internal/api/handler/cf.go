@@ -195,36 +195,57 @@ func (h *CFHandler) UpdateAccount(c *gin.Context) {
 		response.BadRequest(c, "invalid request body")
 		return
 	}
+	// Write only the columns the request actually mentions.
+	//
+	// This was First -> mutate -> Save(&row), and Save writes every column from
+	// the snapshot read above. CheckAccount updates health and last_check_at
+	// concurrently, so editing a note while a check was running quietly restored
+	// the pre-check health value; the quota filtering that decides which accounts
+	// are eligible then acted on that stale verdict, with nothing in the log to
+	// show it had been rolled back. No transaction and no version column, so the
+	// later write simply won.
+	updates := map[string]any{}
 	if req.Name != nil {
 		row.Name = *req.Name
+		updates["name"] = row.Name
 	}
 	if req.Role != nil {
 		row.Role = *req.Role
+		updates["role"] = row.Role
 	}
 	if req.WorkerURL != nil {
 		row.WorkerURL = *req.WorkerURL
+		updates["worker_url"] = row.WorkerURL
 	}
 	if req.WorkerName != nil {
 		row.WorkerName = *req.WorkerName
+		updates["worker_name"] = row.WorkerName
 	}
 	if req.Subdomain != nil {
 		row.Subdomain = *req.Subdomain
+		updates["subdomain"] = row.Subdomain
 	}
 	if req.UUID != nil {
 		row.UUID = *req.UUID
+		updates["uuid"] = row.UUID
 	}
 	if req.RepoURL != nil {
 		row.RepoURL = *req.RepoURL
+		updates["repo_url"] = row.RepoURL
 	}
 	if req.Enabled != nil {
 		row.Enabled = *req.Enabled
+		updates["enabled"] = row.Enabled
 	}
 	if req.Note != nil {
 		row.Note = *req.Note
+		updates["note"] = row.Note
 	}
-	if err := h.db.WithContext(c).Save(&row).Error; err != nil {
-		response.InternalError(c, "failed to save account")
-		return
+	if len(updates) > 0 {
+		if err := h.db.WithContext(c).Model(&model.CFAccount{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+			response.InternalError(c, "failed to save account")
+			return
+		}
 	}
 	response.OK(c, row)
 }
