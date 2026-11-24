@@ -2,11 +2,12 @@ package source
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -49,7 +50,7 @@ func CheckFetchDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool,
 		Where("source_id = ?", sourceID).
 		Order("fetched_at ASC").
 		First(&oldest).Error
-	if oldestErr != nil && oldestErr != gorm.ErrRecordNotFound {
+	if oldestErr != nil && !errors.Is(oldestErr, gorm.ErrRecordNotFound) {
 		return false, oldestErr
 	}
 
@@ -59,7 +60,7 @@ func CheckFetchDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool,
 		Where("source_id = ?", sourceID).
 		Order("fetched_at DESC").
 		First(&latest).Error
-	if latestErr != nil && latestErr != gorm.ErrRecordNotFound {
+	if latestErr != nil && !errors.Is(latestErr, gorm.ErrRecordNotFound) {
 		return false, latestErr
 	}
 
@@ -91,7 +92,7 @@ func CheckFetchDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool,
 		// Source is too new to be condemned by Path B.
 		return false, nil
 	}
-	if latestErr == gorm.ErrRecordNotFound {
+	if errors.Is(latestErr, gorm.ErrRecordNotFound) {
 		// Old source, never fetched.
 		return true, nil
 	}

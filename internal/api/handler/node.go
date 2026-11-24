@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -116,7 +117,7 @@ func (h *NodeHandler) Get(c *gin.Context, id openapi_types.UUID) {
 	nodeID := uuid.UUID(id)
 	node, sources, err := h.svc.Get(ctx, nodeID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "node not found")
 		} else {
 			response.InternalError(c, "failed to get node")
@@ -163,7 +164,7 @@ func (h *NodeHandler) Get(c *gin.Context, id openapi_types.UUID) {
 // Delete handles DELETE /api/v1/nodes/:id.
 func (h *NodeHandler) Delete(c *gin.Context, id openapi_types.UUID) {
 	if err := h.svc.Delete(c.Request.Context(), uuid.UUID(id)); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "node not found")
 		} else {
 			response.InternalError(c, "failed to delete node")

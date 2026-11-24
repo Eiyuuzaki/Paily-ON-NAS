@@ -2,10 +2,11 @@ package source
 
 import (
 	"context"
+	"errors"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -82,17 +83,17 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 			Order("checked_at ASC").
 			First(&candidate).Error
 		if err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
 			return false, err
 		}
-		if oldestErr == gorm.ErrRecordNotFound || candidate.CheckedAt.Before(oldest.CheckedAt) {
+		if errors.Is(oldestErr, gorm.ErrRecordNotFound) || candidate.CheckedAt.Before(oldest.CheckedAt) {
 			oldest = candidate
 			oldestErr = nil
 		}
 	}
-	if oldestErr != nil && oldestErr != gorm.ErrRecordNotFound {
+	if oldestErr != nil && !errors.Is(oldestErr, gorm.ErrRecordNotFound) {
 		return false, oldestErr
 	}
 
@@ -106,17 +107,17 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 			Order("checked_at DESC").
 			First(&candidate).Error
 		if err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
 			return false, err
 		}
-		if latestErr == gorm.ErrRecordNotFound || candidate.CheckedAt.After(latest.CheckedAt) {
+		if errors.Is(latestErr, gorm.ErrRecordNotFound) || candidate.CheckedAt.After(latest.CheckedAt) {
 			latest = candidate
 			latestErr = nil
 		}
 	}
-	if latestErr != nil && latestErr != gorm.ErrRecordNotFound {
+	if latestErr != nil && !errors.Is(latestErr, gorm.ErrRecordNotFound) {
 		return false, latestErr
 	}
 
@@ -143,7 +144,7 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 				Select("id").
 				Where("node_id IN ? AND checked_at >= ? AND latency_ms != ?", batch, windowStart, -1).
 				Take(&aliveRow).Error
-			if err != nil && err != gorm.ErrRecordNotFound {
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return false, err
 			}
 			if err == nil {
@@ -161,7 +162,7 @@ func CheckNodeDead(ctx context.Context, db *gorm.DB, sourceID uuid.UUID) (bool, 
 	if !srcOldEnough {
 		return false, nil
 	}
-	if latestErr == gorm.ErrRecordNotFound {
+	if errors.Is(latestErr, gorm.ErrRecordNotFound) {
 		// Old source, never checked.
 		return true, nil
 	}

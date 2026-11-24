@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
@@ -212,7 +213,7 @@ func (s *Service) GetDeepChecks(ctx context.Context, nodeID uuid.UUID, page, lim
 func (s *Service) GetLatestDeepCheck(ctx context.Context, nodeID uuid.UUID) (*model.NodeDeepCheck, error) {
 	var check model.NodeDeepCheck
 	err := s.db.WithContext(ctx).Where("node_id = ?", nodeID).Order("checked_at DESC").First(&check).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {

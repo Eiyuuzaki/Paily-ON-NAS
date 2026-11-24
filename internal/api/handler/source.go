@@ -1,15 +1,16 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	sourcePkg "github.com/Eiyuuzaki/paily-on-nas/internal/source"
+	"github.com/gin-gonic/gin"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"gorm.io/gorm"
 )
 
@@ -146,7 +147,7 @@ func (h *SourceHandler) List(c *gin.Context, params api.SourceListParams) {
 func (h *SourceHandler) Get(c *gin.Context, id openapi_types.UUID) {
 	src, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "source not found")
 		} else {
 			response.InternalError(c, "failed to get source")
@@ -172,7 +173,7 @@ func (h *SourceHandler) Update(c *gin.Context, id openapi_types.UUID) {
 	}
 	src, err := h.svc.Update(c.Request.Context(), id, req.Identifier, req.Info, req.Content, req.Priority)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "source not found")
 		} else {
 			response.InternalError(c, "failed to update source")
@@ -197,7 +198,7 @@ func (h *SourceHandler) Update(c *gin.Context, id openapi_types.UUID) {
 // Delete handles DELETE /api/v1/sources/{id}.
 func (h *SourceHandler) Delete(c *gin.Context, id openapi_types.UUID) {
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "source not found")
 		} else {
 			response.InternalError(c, "failed to delete source")
@@ -219,7 +220,7 @@ func (h *SourceHandler) IgnoreDead(c *gin.Context, id openapi_types.UUID) {
 	}
 	src, err := h.svc.SetIgnoreDead(c.Request.Context(), id, req.IgnoreDead)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c, "source not found")
 		} else {
 			response.InternalError(c, "failed to update source")
