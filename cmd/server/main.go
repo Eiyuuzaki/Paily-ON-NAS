@@ -63,6 +63,7 @@ func main() {
 	migrateFlag := flag.Bool("migrate", false, "migrate config tables from SQLite to PostgreSQL, then exit")
 	ipscanFlag := flag.Bool("ipscan", false, "probe candidate Cloudflare /24s for fast edge entries, then exit")
 	benchFlag := flag.Bool("bench", false, "measure single-flow throughput of in-use entry addresses, then exit")
+	benchDryFlag := flag.Bool("bench-dry", false, "print the entry addresses the next bench would measure, then exit")
 	migrateFrom := flag.String("migrate-from", "", "path to source SQLite database file (required with -migrate)")
 	flag.Parse()
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr}).Level(zerolog.InfoLevel)
@@ -145,6 +146,26 @@ func main() {
 	// about 1 MB/s, while US West carried 4.2 MB/s per flow at 141 ms more
 	// latency. A latency-only ranking therefore sends every client to the slow
 	// path. This measures the missing column.
+	if *benchDryFlag {
+		cfg, err := config.Load(*cfgFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to load config")
+		}
+		database, err := db.Init(cfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to init database")
+		}
+		ips, err := entryip.Candidates(database, envIntOr("BENCH_LIMIT", 40))
+		if err != nil {
+			log.Fatal().Err(err).Msg("bench-dry failed")
+		}
+		for _, ip := range ips {
+			fmt.Println(ip)
+		}
+		fmt.Printf("bench-dry: candidates=%d\n", len(ips))
+		return
+	}
+
 	if *benchFlag {
 		cfg, err := config.Load(*cfgFile)
 		if err != nil {

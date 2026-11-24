@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +112,24 @@ func Bench(ctx context.Context, db *gorm.DB, opt BenchOptions) (measured int, fa
 	return measured, failed, nil
 }
 
+// Candidates returns the entry addresses the next bench would measure, in the
+// order it would try them. Exposed so a dry run can show the rotation without
+// downloading anything.
+func Candidates(db *gorm.DB, limit int) ([]string, error) {
+	return benchCandidates(db, limit)
+}
+
+// isEntryAddress reports whether s is a literal IPv4 or IPv6 address.
+// Hostnames are rejected: benchOne dials the address itself, so a hostname only
+// measures whatever DNS happens to resolve to, which is not an entry reading.
+// Those attempts always burned a full payload before failing.
+func isEntryAddress(s string) bool {
+	if s == "" || strings.ContainsAny(s, "/ ") {
+		return false
+	}
+	return net.ParseIP(s) != nil
+}
+
 // benchCandidates returns in-use entries first, then the lowest-RTT entries,
 // de-duplicated, capped at limit.
 func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
@@ -128,6 +147,7 @@ func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 	if err := db.Raw(`SELECT n.server FROM nodes n
 		LEFT JOIN entry_ips e ON e.ip = n.server
 		WHERE n.archived_at IS NULL AND n.alive = true AND n.server <> ''
+		  AND (n.server ~ '^[0-9.]+$' OR n.server ~ ':')
 		GROUP BY n.server, e.throughput_at, e.attempted_at
 		ORDER BY greatest(coalesce(e.throughput_at, to_timestamp(0)),
 			coalesce(e.attempted_at, to_timestamp(0))) ASC,
@@ -135,7 +155,7 @@ func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 		return nil, err
 	}
 	for _, ip := range inUse {
-		if ip == "" || seen[ip] {
+		if !isEntryAddress(ip) || seen[ip] {
 			continue
 		}
 		seen[ip] = true
@@ -152,12 +172,13 @@ func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 	// self-built KHH/SIN edges, whose throughput had to be written by hand.
 	var extra []string
 	if err := db.Raw(`SELECT ip FROM entry_ips
-		WHERE rtt_ms > 0 OR scan_rtt_ms > 0
+		WHERE (rtt_ms > 0 OR scan_rtt_ms > 0)
+		  AND (ip ~ '^[0-9.]+$' OR ip ~ ':')
 		ORDER BY coalesce(nullif(scan_rtt_ms, 0), rtt_ms) ASC`).Scan(&extra).Error; err != nil {
 		return nil, err
 	}
 	for _, ip := range extra {
-		if ip == "" || seen[ip] {
+		if !isEntryAddress(ip) || seen[ip] {
 			continue
 		}
 		seen[ip] = true
