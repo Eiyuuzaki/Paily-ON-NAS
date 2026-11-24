@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
@@ -101,7 +102,7 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 	streamMap := make(map[string]string)
 	if len(nodes) > 0 {
 		var rows []streamRow
-		db.Model(&model.NodeDeepCheck{}).
+		if err := db.Model(&model.NodeDeepCheck{}).
 			Select("dc.node_id, dc.streaming_result").
 			Joins(`INNER JOIN (
 				SELECT node_id, MAX(id) AS mid
@@ -109,7 +110,12 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 				GROUP BY node_id
 			) t ON dc.id = t.mid`).
 			Table("node_deep_checks dc").
-			Scan(&rows)
+			Scan(&rows).Error; err != nil {
+			// A silently emptied map is worse than a failure: every node then
+			// evaluates with no streaming flags and the preview reports a
+			// confident, wrong answer.
+			return nil, fmt.Errorf("load streaming results: %w", err)
+		}
 		for _, r := range rows {
 			streamMap[r.NodeID.String()] = r.StreamingResult
 		}
@@ -121,7 +127,9 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 	sourceMap := make(map[string][]string)
 	if len(nodes) > 0 {
 		var mappings []model.NodeSource
-		db.Select("node_id, source_id").Find(&mappings)
+		if err := db.Select("node_id, source_id").Find(&mappings).Error; err != nil {
+			return nil, fmt.Errorf("load node sources: %w", err)
+		}
 		for _, m := range mappings {
 			nid := m.NodeID.String()
 			sourceMap[nid] = append(sourceMap[nid], m.SourceID.String())
@@ -137,7 +145,7 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 			LatencyMs int       `gorm:"column:latency_ms"`
 		}
 		var rows []latRow
-		db.Model(&model.NodeInitialCheck{}).
+		if err := db.Model(&model.NodeInitialCheck{}).
 			Select("ic.node_id, ic.latency_ms").
 			Joins(`INNER JOIN (
 				SELECT node_id, MAX(id) AS mid
@@ -145,7 +153,12 @@ func previewNodes(ctx interface{ Done() <-chan struct{} }, db *gorm.DB, expressi
 				GROUP BY node_id
 			) t ON ic.id = t.mid`).
 			Table("node_initial_checks ic").
-			Scan(&rows)
+			Scan(&rows).Error; err != nil {
+			// An empty latency map makes every node evaluate with Latency = -1
+			// (the sentinel below), so "Latency > 500" silently matches nothing
+			// and the operator concludes there are no slow nodes.
+			return nil, fmt.Errorf("load initial-check latencies: %w", err)
+		}
 		for _, r := range rows {
 			latencyMap[r.NodeID.String()] = r.LatencyMs
 		}
