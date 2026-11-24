@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	//"fmt"
-
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/format"
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/node"
 )
