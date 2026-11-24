@@ -91,9 +91,11 @@ func (h *SearchHandler) NodeSearch(c *gin.Context) {
 	for i, n := range page_ {
 		pageIDs[i] = n.ID
 	}
-	initChecks := latestInitialChecksBatch(c.Request.Context(), h.db, pageIDs)
-	deepChecks := latestDeepChecksBatch(c.Request.Context(), h.db, pageIDs)
-	nodeSrcs := nodeSourcesBatch(c.Request.Context(), h.db, pageIDs)
+	initChecks, deepChecks, nodeSrcs, err := loadNodeBatches(c.Request.Context(), h.db, pageIDs)
+	if err != nil {
+		response.InternalError(c, "failed to load node check details")
+		return
+	}
 
 	data := make([]api.NodeSummary, len(page_))
 	for i := range page_ {

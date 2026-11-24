@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -81,9 +82,11 @@ func (h *NodeHandler) List(c *gin.Context, params api.NodeListParams) {
 	for i, n := range nodes {
 		nodeIDs[i] = n.ID
 	}
-	initChecks := latestInitialChecksBatch(c.Request.Context(), h.db, nodeIDs)
-	deepChecks := latestDeepChecksBatch(c.Request.Context(), h.db, nodeIDs)
-	nodeSrcs := nodeSourcesBatch(c.Request.Context(), h.db, nodeIDs)
+	initChecks, deepChecks, nodeSrcs, err := loadNodeBatches(c.Request.Context(), h.db, nodeIDs)
+	if err != nil {
+		response.InternalError(c, "failed to load node check details")
+		return
+	}
 
 	summaries := make([]api.NodeSummary, len(nodes))
 	for i := range nodes {
@@ -120,8 +123,16 @@ func (h *NodeHandler) Get(c *gin.Context, id openapi_types.UUID) {
 		}
 		return
 	}
-	latestDeep, _ := h.svc.GetLatestDeepCheck(ctx, nodeID)
-	latestInitial := latestInitialChecksBatch(ctx, h.db, []uuid.UUID{nodeID})
+	latestDeep, err := h.svc.GetLatestDeepCheck(ctx, nodeID)
+	if err != nil {
+		response.InternalError(c, "failed to load latest deep check")
+		return
+	}
+	latestInitial, err := latestInitialChecksBatch(ctx, h.db, []uuid.UUID{nodeID})
+	if err != nil {
+		response.InternalError(c, "failed to load latest initial check")
+		return
+	}
 
 	// Query per-tag scores.
 	var tagScoreRows []model.NodeTagScore
@@ -282,63 +293,101 @@ func normaliseNodeListPageLimit(page, limit int) (int, int) {
 	return page, limit
 }
 
+// batchQueryError wraps a failure from one batch of a batched load.
+//
+// A batched load spans several queries, and returning a partial map would make
+// "the query for these nodes failed" indistinguishable from "these nodes have no
+// row yet" - the second of which is also a valid state. Every batch failure is
+// therefore surfaced, not skipped.
+type batchQueryError struct {
+	what  string
+	batch int
+	err   error
+}
+
+func (e *batchQueryError) Error() string {
+	return fmt.Sprintf("%s: batch %d: %v", e.what, e.batch, e.err)
+}
+
+func (e *batchQueryError) Unwrap() error { return e.err }
+
 // latestInitialChecksBatch returns the most recent initial check per node ID.
-func latestInitialChecksBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) map[uuid.UUID]*model.NodeInitialCheck {
+//
+// The correlated subquery here is deliberate and must not be "optimised" into
+// the GROUP BY MAX(id) + JOIN form that filter.go uses. That form wins only when
+// there is no node_id filter, because it aggregates the whole table first.
+// Measured on the production table (82,903 rows) with ids supplied:
+//
+//	no filter:            correlated 466.7ms   grouped 102.3ms   (grouped wins)
+//	200 node_id filter:   correlated  22.7ms   grouped  84.1ms   (correlated wins)
+//
+// This function always filters by node_id, so PostgreSQL narrows through
+// idx_node_initial_checks_node_id and runs the subquery only len(batch) times.
+// Switching it to the grouped form measured 3.7x slower.
+func latestInitialChecksBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) (map[uuid.UUID]*model.NodeInitialCheck, error) {
 	if len(nodeIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	var rows []model.NodeInitialCheck
-	for _, batch := range chunkUUIDs(nodeIDs, 10000) {
+	for i, batch := range chunkUUIDs(nodeIDs, 10000) {
 		var batchRows []model.NodeInitialCheck
-		db.WithContext(ctx).
+		if err := db.WithContext(ctx).
 			Where("node_id IN ? AND checked_at = (SELECT MAX(ic2.checked_at) FROM node_initial_checks ic2 WHERE ic2.node_id = node_initial_checks.node_id)", batch).
-			Find(&batchRows)
+			Find(&batchRows).Error; err != nil {
+			return nil, &batchQueryError{what: "load initial checks", batch: i, err: err}
+		}
 		rows = append(rows, batchRows...)
 	}
 	m := make(map[uuid.UUID]*model.NodeInitialCheck, len(rows))
 	for i := range rows {
 		m[rows[i].NodeID] = &rows[i]
 	}
-	return m
+	return m, nil
 }
 
 // latestDeepChecksBatch returns the most recent deep check per node ID.
-func latestDeepChecksBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) map[uuid.UUID]*model.NodeDeepCheck {
+// Same filtered-correlated form as latestInitialChecksBatch, for the same
+// measured reason - see the note there before changing it.
+func latestDeepChecksBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) (map[uuid.UUID]*model.NodeDeepCheck, error) {
 	if len(nodeIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	var rows []model.NodeDeepCheck
-	for _, batch := range chunkUUIDs(nodeIDs, 10000) {
+	for i, batch := range chunkUUIDs(nodeIDs, 10000) {
 		var batchRows []model.NodeDeepCheck
-		db.WithContext(ctx).
+		if err := db.WithContext(ctx).
 			Where("node_id IN ? AND checked_at = (SELECT MAX(dc2.checked_at) FROM node_deep_checks dc2 WHERE dc2.node_id = node_deep_checks.node_id)", batch).
-			Find(&batchRows)
+			Find(&batchRows).Error; err != nil {
+			return nil, &batchQueryError{what: "load deep checks", batch: i, err: err}
+		}
 		rows = append(rows, batchRows...)
 	}
 	m := make(map[uuid.UUID]*model.NodeDeepCheck, len(rows))
 	for i := range rows {
 		m[rows[i].NodeID] = &rows[i]
 	}
-	return m
+	return m, nil
 }
 
 // nodeSourcesBatch returns all sources per node ID for a batch of nodes.
-func nodeSourcesBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) map[uuid.UUID][]model.Source {
+func nodeSourcesBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) (map[uuid.UUID][]model.Source, error) {
 	if len(nodeIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	type nsRow struct {
 		NodeID   uuid.UUID
 		SourceID uuid.UUID
 	}
 	var ns []nsRow
-	for _, batch := range chunkUUIDs(nodeIDs, 10000) {
+	for i, batch := range chunkUUIDs(nodeIDs, 10000) {
 		var batchNS []nsRow
-		db.WithContext(ctx).Table("node_sources").Where("node_id IN ?", batch).Scan(&batchNS)
+		if err := db.WithContext(ctx).Table("node_sources").Where("node_id IN ?", batch).Scan(&batchNS).Error; err != nil {
+			return nil, &batchQueryError{what: "load node-source links", batch: i, err: err}
+		}
 		ns = append(ns, batchNS...)
 	}
 	if len(ns) == 0 {
-		return nil
+		return nil, nil
 	}
 	srcSet := make(map[uuid.UUID]struct{}, len(ns))
 	for _, r := range ns {
@@ -349,9 +398,11 @@ func nodeSourcesBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) map
 		srcIDs = append(srcIDs, id)
 	}
 	var sources []model.Source
-	for _, batch := range chunkUUIDs(srcIDs, 10000) {
+	for i, batch := range chunkUUIDs(srcIDs, 10000) {
 		var batchSources []model.Source
-		db.WithContext(ctx).Where("id IN ?", batch).Find(&batchSources)
+		if err := db.WithContext(ctx).Where("id IN ?", batch).Find(&batchSources).Error; err != nil {
+			return nil, &batchQueryError{what: "load sources", batch: i, err: err}
+		}
 		sources = append(sources, batchSources...)
 	}
 	srcByID := make(map[uuid.UUID]*model.Source, len(sources))
@@ -364,7 +415,33 @@ func nodeSourcesBatch(ctx context.Context, db *gorm.DB, nodeIDs []uuid.UUID) map
 			m[r.NodeID] = append(m[r.NodeID], *src)
 		}
 	}
-	return m
+	return m, nil
+}
+
+// loadNodeBatches loads the three per-node detail maps together.
+//
+// Both list-shaped handlers (NodeHandler.List and SearchHandler.NodeSearch) need
+// all three and share one error path, so the combination lives here instead of
+// being spelled out twice.
+func loadNodeBatches(ctx context.Context, db *gorm.DB, ids []uuid.UUID) (
+	map[uuid.UUID]*model.NodeInitialCheck,
+	map[uuid.UUID]*model.NodeDeepCheck,
+	map[uuid.UUID][]model.Source,
+	error,
+) {
+	initChecks, err := latestInitialChecksBatch(ctx, db, ids)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	deepChecks, err := latestDeepChecksBatch(ctx, db, ids)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	nodeSrcs, err := nodeSourcesBatch(ctx, db, ids)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return initChecks, deepChecks, nodeSrcs, nil
 }
 
 func chunkUUIDs(ids []uuid.UUID, batchSize int) [][]uuid.UUID {
