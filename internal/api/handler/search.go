@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/filter"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"gorm.io/gorm"
 )
 
@@ -41,7 +41,9 @@ func (h *SearchHandler) NodeSearch(c *gin.Context) {
 	}
 
 	var nodes []model.Node
-	if err := h.db.WithContext(c.Request.Context()).Find(&nodes).Error; err != nil {
+	// Retired nodes are kept as rows so their hash keeps blocking re-ingestion;
+	// without this they are still searchable and still counted.
+	if err := h.db.WithContext(c.Request.Context()).Where("archived_at IS NULL").Find(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -82,13 +84,7 @@ func (h *SearchHandler) NodeSearch(c *gin.Context) {
 	}
 
 	total := int64(len(matched))
-	start := (page - 1) * limit
-	end := start + limit
-	if start >= len(matched) {
-		start, end = len(matched), len(matched)
-	} else if end > len(matched) {
-		end = len(matched)
-	}
+	start, end := pageBounds(page, limit, len(matched))
 	page_ := matched[start:end]
 
 	pageIDs := make([]uuid.UUID, len(page_))
@@ -160,13 +156,7 @@ func (h *SearchHandler) SourceSearch(c *gin.Context) {
 	}
 
 	total := int64(len(matched))
-	start := (page - 1) * limit
-	end := start + limit
-	if start >= len(matched) {
-		start, end = len(matched), len(matched)
-	} else if end > len(matched) {
-		end = len(matched)
-	}
+	start, end := pageBounds(page, limit, len(matched))
 	page_ := matched[start:end]
 
 	data := make([]api.SourceSummary, len(page_))
@@ -286,4 +276,30 @@ func jsonToStr(v interface{}) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
+}
+
+// pageBounds returns the slice range for a page, clamped so it can never go
+// negative or past the end.
+//
+// The previous arithmetic computed (page-1)*limit directly. page comes straight
+// from the request, and a value large enough overflows the multiplication into a
+// negative number; the following bounds checks all compare against
+// len(matched), which a negative start passes, and the slice then panics.
+func pageBounds(page, limit, total int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	// Compute in int64 so the multiplication cannot wrap, then clamp.
+	start64 := (int64(page) - 1) * int64(limit)
+	if start64 < 0 || start64 >= int64(total) {
+		return total, total
+	}
+	end64 := start64 + int64(limit)
+	if end64 > int64(total) {
+		end64 = int64(total)
+	}
+	return int(start64), int(end64)
 }

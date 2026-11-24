@@ -79,8 +79,16 @@ func NotImplemented(c *gin.Context) {
 	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
 }
 
+// MaxPage bounds the page number.
+//
+// Without a bound, a page large enough makes (page-1)*limit overflow into a
+// negative index, and callers slice with it: matched[start:end] with a negative
+// start panics, which the recovery middleware turns into a 500 the caller can
+// trigger on demand.
+const MaxPage = 1_000_000
+
 // ParsePage extracts and validates page/limit query params.
-// Defaults: page=1, limit=20. Max limit=200.
+// Defaults: page=1, limit=20. Max limit=200, max page=MaxPage.
 func ParsePage(c *gin.Context) (page, limit int) {
 	page = 1
 	limit = 20
@@ -97,6 +105,9 @@ func ParsePage(c *gin.Context) (page, limit int) {
 	if limit > 200 {
 		limit = 200
 	}
+	if page > MaxPage {
+		page = MaxPage
+	}
 	return page, limit
 }
 
@@ -105,6 +116,12 @@ func parseInt(s string) int {
 	for _, c := range s {
 		if c < '0' || c > '9' {
 			return 0
+		}
+		// Stop before n*10 can overflow: a long enough digit string would wrap,
+		// and the wrapped value is then either rejected by n > 0 or, worse,
+		// accepted as a plausible-looking page number.
+		if n > (MaxPage-int(c-'0'))/10 {
+			return MaxPage
 		}
 		n = n*10 + int(c-'0')
 	}
