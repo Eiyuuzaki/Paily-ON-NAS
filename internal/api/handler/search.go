@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	api "github.com/Eiyuuzaki/paily-on-nas/internal/api/generated"
@@ -41,9 +40,16 @@ func (h *SearchHandler) NodeSearch(c *gin.Context) {
 	}
 
 	var nodes []model.Node
+	// Only the columns the filter can address are read. nodes.raw holds the full
+	// clash proxy config (hundreds of bytes per row) and is never consulted here;
+	// SELECT * pulled the whole table plus that column into memory on every
+	// search. filter.go already trims the same way, for the same reason.
 	// Retired nodes are kept as rows so their hash keeps blocking re-ingestion;
-	// without this they are still searchable and still counted.
-	if err := h.db.WithContext(c.Request.Context()).Where("archived_at IS NULL").Find(&nodes).Error; err != nil {
+	// without the archived_at condition they stay searchable and stay counted.
+	if err := h.db.WithContext(c.Request.Context()).
+		Select("id, server, protocol, password, hash, region, alive, score").
+		Where("archived_at IS NULL").
+		Find(&nodes).Error; err != nil {
 		response.InternalError(c, "failed to query nodes")
 		return
 	}
@@ -256,28 +262,14 @@ func loadNodeMaps(_ interface{ Done() <-chan struct{} }, db *gorm.DB) (streamMap
 	}
 
 	var mappings []model.NodeSource
-	db.Find(&mappings)
+	if err := db.Find(&mappings).Error; err != nil {
+		return
+	}
 	for _, m := range mappings {
 		nid := m.NodeID.String()
 		sourceMap[nid] = append(sourceMap[nid], m.SourceID.String())
 	}
 	return
-}
-
-// jsonToStr converts an arbitrary value to its string representation.
-func jsonToStr(v interface{}) string {
-	if v == nil {
-		return ""
-	}
-	switch s := v.(type) {
-	case string:
-		return s
-	case []byte:
-		return string(s)
-	default:
-		b, _ := json.Marshal(v)
-		return string(b)
-	}
 }
 
 // pageBounds returns the slice range for a page, clamped so it can never go

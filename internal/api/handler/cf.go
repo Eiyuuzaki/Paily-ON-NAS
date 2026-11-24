@@ -42,13 +42,26 @@ type cfModuleState struct {
 	ActivatedAt string `json:"activated_at,omitempty"`
 }
 
-func (h *CFHandler) loadState(c *gin.Context) cfModuleState {
+// loadState reads the stored CF module state.
+//
+// A missing row is a normal "not activated yet"; a failed query is not, and used
+// to be treated the same way - both left the zero value behind, so the panel
+// reported activated:false and invited the operator to activate again, which
+// overwrites repo_url. The two cases are separated here.
+func (h *CFHandler) loadState(c *gin.Context) (cfModuleState, error) {
 	var st cfModuleState
 	var rec model.Config
-	if err := h.db.WithContext(c).Where("key = ?", cfModuleConfigKey).First(&rec).Error; err == nil {
-		_ = json.Unmarshal([]byte(rec.Value), &st)
+	err := h.db.WithContext(c).Where("key = ?", cfModuleConfigKey).First(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return st, nil
 	}
-	return st
+	if err != nil {
+		return st, fmt.Errorf("read %s: %w", cfModuleConfigKey, err)
+	}
+	if err := json.Unmarshal([]byte(rec.Value), &st); err != nil {
+		return st, fmt.Errorf("parse %s: %w", cfModuleConfigKey, err)
+	}
+	return st, nil
 }
 
 func (h *CFHandler) saveState(c *gin.Context, st cfModuleState) error {
@@ -61,7 +74,11 @@ func (h *CFHandler) saveState(c *gin.Context, st cfModuleState) error {
 
 // Status handles GET /api/v1/cf/module.
 func (h *CFHandler) Status(c *gin.Context) {
-	st := h.loadState(c)
+	st, err := h.loadState(c)
+	if err != nil {
+		response.InternalError(c, "failed to read cf module state")
+		return
+	}
 	response.OK(c, gin.H{"activated": st.Activated, "repo_url": st.RepoURL})
 }
 
@@ -91,7 +108,11 @@ func (h *CFHandler) Activate(c *gin.Context) {
 
 // Deactivate handles POST /api/v1/cf/module/deactivate.
 func (h *CFHandler) Deactivate(c *gin.Context) {
-	st := h.loadState(c)
+	st, err := h.loadState(c)
+	if err != nil {
+		response.InternalError(c, "failed to read cf module state")
+		return
+	}
 	st.Activated = false
 	if err := h.saveState(c, st); err != nil {
 		response.InternalError(c, "failed to save state")

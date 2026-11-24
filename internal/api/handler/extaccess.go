@@ -3,15 +3,15 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"io"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/api/response"
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -25,9 +25,9 @@ const extAccessHostKey = "extaccess_public_host"
 // which the panel owns the value. Reads are cached for 10s so the hot
 // subscription path does not hit the database on every request.
 type SubscribeTokenManager struct {
-	db       *gorm.DB
-	yamlVal  string
-	mu       sync.RWMutex
+	db         *gorm.DB
+	yamlVal    string
+	mu         sync.RWMutex
 	cache      string
 	cachedAt   time.Time
 	cacheValid bool
@@ -56,8 +56,12 @@ func (m *SubscribeTokenManager) Get() string {
 		m.mu.RLock()
 		valid, cached := m.cacheValid, m.cache
 		m.mu.RUnlock()
-		if valid { return cached }
-		if m.yamlVal != "" { return m.yamlVal }
+		if valid {
+			return cached
+		}
+		if m.yamlVal != "" {
+			return m.yamlVal
+		}
 		return "unavailable-paily-token"
 	}
 	if res.RowsAffected > 0 {
@@ -90,13 +94,25 @@ func (m *SubscribeTokenManager) Set(tok string) error {
 	return nil
 }
 
-func (m *SubscribeTokenManager) publicHost() string {
+// defaultPublicHost is the fallback when no host has been configured yet.
+// It is only for "never set"; a failed read must not silently land here, or the
+// panel shows a real-looking domain the deployment does not actually answer on.
+const defaultPublicHost = "sub.lencf.dpdns.org"
+
+// publicHost returns the configured public host.
+//
+// The error is returned rather than folded into the fallback: /extaccess/test
+// probes whatever this returns, so a silent fallback made the operator see
+// "unreachable" for a domain problem that was really a database one.
+func (m *SubscribeTokenManager) publicHost() (string, error) {
 	var host string
-	m.db.Raw("SELECT value FROM configs WHERE key = ?", extAccessHostKey).Scan(&host)
-	if host == "" {
-		host = "sub.lencf.dpdns.org"
+	if err := m.db.Raw("SELECT value FROM configs WHERE key = ?", extAccessHostKey).Scan(&host).Error; err != nil {
+		return "", fmt.Errorf("read %s: %w", extAccessHostKey, err)
 	}
-	return host
+	if host == "" {
+		return defaultPublicHost, nil
+	}
+	return host, nil
 }
 
 func subURLs(host, token string) map[string]string {
@@ -123,7 +139,11 @@ func NewExtAccessHandler(db *gorm.DB, mgr *SubscribeTokenManager) *ExtAccessHand
 // admin, and the route is behind adminJWT.
 func (h *ExtAccessHandler) Root(c *gin.Context) {
 	tok := h.mgr.Get()
-	host := h.mgr.publicHost()
+	host, err := h.mgr.publicHost()
+	if err != nil {
+		response.InternalError(c, "failed to read public host")
+		return
+	}
 	response.OK(c, gin.H{
 		"token":       tok,
 		"enabled":     tok != "",
@@ -200,11 +220,19 @@ func (h *ExtAccessHandler) SetHost(c *gin.Context) {
 // browser cannot test it directly (cross-origin without CORS on the tunnel),
 // so core does the fetch and reports status plus latency.
 func (h *ExtAccessHandler) Test(c *gin.Context) {
-	host := h.mgr.publicHost()
+	host, err := h.mgr.publicHost()
+	if err != nil {
+		response.InternalError(c, "failed to read public host")
+		return
+	}
 	tok := h.mgr.Get()
 	client := &http.Client{Timeout: 20 * time.Second}
 	start := time.Now()
-	req, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodGet,
+	// Checked: an empty or unparsable host yields a nil request, and client.Do(nil)
+	// dereferences it. The old code discarded this error, so a host the operator
+	// typed wrongly (SetHost only rejects empty and spaces) turned every test into
+	// a panic that the recovery middleware reported as a 500 with a panic stack.
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet,
 		"https://"+host+"/clash?token="+url.QueryEscape(tok), nil)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -216,8 +244,6 @@ func (h *ExtAccessHandler) Test(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	buf := make([]byte, 512)
-	_, _ = io.ReadFull(resp.Body, buf)
 	response.OK(c, gin.H{
 		"ok":         resp.StatusCode == http.StatusOK,
 		"http_code":  resp.StatusCode,
