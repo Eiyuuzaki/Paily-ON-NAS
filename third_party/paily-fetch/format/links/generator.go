@@ -2,6 +2,7 @@ package links
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/third_party/paily-fetch/internal/format"
@@ -59,7 +60,13 @@ func (g *Generator) Generate(cfg format.FormatConfig) ([]byte, error) {
 		var conf struct {
 			Default string `json:"default"`
 		}
-		if err := json.Unmarshal(cfg, &conf); err == nil && conf.Default != "" {
+		// A stored config that does not decode is an error, not a silent fall
+		// back to the v2rayN preference: the operator set a preference and the
+		// subscription would ignore it without saying so.
+		if err := json.Unmarshal(cfg, &conf); err != nil {
+			return nil, fmt.Errorf("links generator: parse config: %w", err)
+		}
+		if conf.Default != "" {
 			pref = conf.Default
 		}
 	}

@@ -41,10 +41,6 @@ func (g *Generator) Push(n *node.ProxyNode, name string) {
 	g.items = append(g.items, entry)
 }
 
-// SetECHEnabled is retained for callers that used to control generator-side
-// auto-injection. The generator only renders explicit ECH now.
-func (g *Generator) SetECHEnabled(_ bool) {}
-
 func (g *Generator) PushWithRegion(n *node.ProxyNode, name, region string) {
 	g.Push(n, name)
 	if region == "" || region == "CN" {

@@ -30,7 +30,6 @@ func TestGeneratePreservesExplicitECH(t *testing.T) {
 				t.Fatal(err)
 			}
 			g := (&Factory{}).NewGenerator().(*Generator)
-			g.SetECHEnabled(false)
 			g.Push(n, "")
 			out, err := g.Generate(nil)
 			if err != nil {

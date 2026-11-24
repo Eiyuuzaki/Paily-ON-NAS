@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 // emitSudoku generates a sudoku:// link.
@@ -106,6 +105,3 @@ func emitSudoku(clash map[string]any, name string) (string, bool) {
 
 	return "sudoku://" + encoded + frag, true
 }
-
-// _ suppresses unused import warning for strings
-var _ = strings.TrimSpace

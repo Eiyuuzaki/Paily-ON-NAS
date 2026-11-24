@@ -17,10 +17,6 @@ type Generator struct {
 	items []map[string]any
 }
 
-// SetECHEnabled is retained for callers that used to control generator-side
-// auto-injection. The generator only renders explicit ECH now.
-func (g *Generator) SetECHEnabled(_ bool) {}
-
 var _ format.FormatGenerator = (*Generator)(nil)
 
 // skipTypes are protocol types unsupported by sing-box, rejected unconditionally.

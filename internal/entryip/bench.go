@@ -16,6 +16,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// defaultBenchLimit is how many entries one run measures when the caller sets
+// no limit. Kept in one place so Candidates and Bench cannot disagree about it.
+const defaultBenchLimit = 40
+
 // BenchOptions configures a per-entry throughput measurement.
 type BenchOptions struct {
 	// URL must be served by an edge that accepts any Cloudflare anycast address.
@@ -54,7 +58,7 @@ func Bench(ctx context.Context, db *gorm.DB, opt BenchOptions) (measured int, fa
 		opt.Concurrency = 2
 	}
 	if opt.Limit <= 0 {
-		opt.Limit = 40
+		opt.Limit = defaultBenchLimit
 	}
 	if opt.Timeout <= 0 {
 		opt.Timeout = 20 * time.Second
@@ -114,8 +118,12 @@ func Bench(ctx context.Context, db *gorm.DB, opt BenchOptions) (measured int, fa
 
 // Candidates returns the entry addresses the next bench would measure, in the
 // order it would try them. Exposed so a dry run can show the rotation without
-// downloading anything.
+// downloading anything. A non-positive limit takes Bench's own default, so a
+// dry run never reports an empty list for a setting Bench would have accepted.
 func Candidates(db *gorm.DB, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = defaultBenchLimit
+	}
 	return benchCandidates(db, limit)
 }
 
