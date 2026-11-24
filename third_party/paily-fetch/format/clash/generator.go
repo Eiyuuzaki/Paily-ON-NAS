@@ -88,7 +88,10 @@ func regionFlag(code string) string {
 //	proxies:
 //	  - {name: ..., type: ..., ...}
 func (g *Generator) Generate(cfg format.FormatConfig) ([]byte, error) {
-	c := parseConfig(cfg)
+	c, err := parseConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("clash generator: parse config: %w", err)
+	}
 	if c.Template == "" {
 		out := map[string][]map[string]any{"proxies": g.items}
 		data, err := yaml.Marshal(out)

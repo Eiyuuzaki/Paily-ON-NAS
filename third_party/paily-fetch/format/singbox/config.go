@@ -23,14 +23,20 @@ type Config struct {
 }
 
 // parseConfig deserialises a FormatConfig JSON blob into a Config.
-// A nil or empty blob returns a zero-value Config (no template).
-func parseConfig(raw format.FormatConfig) Config {
+// A nil or empty blob returns a zero-value Config (no template). A non-empty
+// blob that does not decode is an error: falling back to a zero-value Config
+// would drop the stored template and emit a bare document without its
+// selectors, routing rules and dns block, and the subscription itself would
+// still look healthy to the operator.
+func parseConfig(raw format.FormatConfig) (Config, error) {
 	if len(raw) == 0 {
-		return Config{}
+		return Config{}, nil
 	}
 	var c Config
-	_ = json.Unmarshal(raw, &c)
-	return c
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return Config{}, err
+	}
+	return c, nil
 }
 
 // managementTypes are sing-box outbound types that represent routing/management
