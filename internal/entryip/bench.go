@@ -94,6 +94,13 @@ func Bench(ctx context.Context, db *gorm.DB, opt BenchOptions) (measured int, fa
 	for r := range out {
 		if !r.ok {
 			failed++
+			// Advance the rotation even on failure. Without this an entry that
+			// never answers keeps sorting first and is retried on every run,
+			// spending the budget the rest of the fleet needs: on 2026-11-24 the
+			// head of the candidate list was 32 IPv6 entries never measured.
+			if e := markAttempted(db, r.ip, now); e != nil {
+				return measured, failed, e
+			}
 			continue
 		}
 		if e := storeThroughput(db, r.ip, r.kbps, now); e != nil {
@@ -104,22 +111,27 @@ func Bench(ctx context.Context, db *gorm.DB, opt BenchOptions) (measured int, fa
 	return measured, failed, nil
 }
 
-// benchCandidates returns in-use entries first, then the lowest-RTT scanned
-// entries, de-duplicated, capped at limit.
+// benchCandidates returns in-use entries first, then the lowest-RTT entries,
+// de-duplicated, capped at limit.
 func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 	seen := make(map[string]bool, limit)
 	ips := make([]string, 0, limit)
 
-	// Ordered by the best score behind each entry, not alphabetically: with a
-	// limit well below the number of entries in rotation, the reading only helps
-	// if it covers the entries distribution is most likely to ship. Ranking by
-	// server name would sample an arbitrary slice and leave the shipped nodes
-	// unmeasured — observed on 2026-11-23, where 12 measured entries overlapped
-	// the shipped set by zero.
+	// Ordered by least-recently-measured, then by the best score behind each
+	// entry. Score alone re-measured the same top slice every run: the fleet has
+	// ~750 distinct servers in rotation while one run measures at most Limit of
+	// them, so entries outside that slice never received a reading at all
+	// (observed 2026-11-24: 32 of 2287 entry rows carried a throughput figure).
+	// Ordering by throughput_at first rotates coverage across the whole fleet on
+	// successive runs, while still preferring the entries distribution ships.
 	var inUse []string
-	if err := db.Raw(`SELECT server FROM nodes
-		WHERE archived_at IS NULL AND alive = true AND server <> ''
-		GROUP BY server ORDER BY max(score) DESC, count(*) DESC`).Scan(&inUse).Error; err != nil {
+	if err := db.Raw(`SELECT n.server FROM nodes n
+		LEFT JOIN entry_ips e ON e.ip = n.server
+		WHERE n.archived_at IS NULL AND n.alive = true AND n.server <> ''
+		GROUP BY n.server, e.throughput_at, e.attempted_at
+		ORDER BY greatest(coalesce(e.throughput_at, to_timestamp(0)),
+			coalesce(e.attempted_at, to_timestamp(0))) ASC,
+			max(n.score) DESC, count(*) DESC`).Scan(&inUse).Error; err != nil {
 		return nil, err
 	}
 	for _, ip := range inUse {
@@ -133,9 +145,15 @@ func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 		}
 	}
 
+	// Filler accepts any entry with a latency reading, not only scanned entries
+	// that also carry a colo. Entries created by the passive refresh have rtt_ms
+	// but neither colo nor scan_rtt_ms, and the old predicate made them
+	// permanently ineligible for a measurement — observed 2026-11-24 on the
+	// self-built KHH/SIN edges, whose throughput had to be written by hand.
 	var extra []string
 	if err := db.Raw(`SELECT ip FROM entry_ips
-		WHERE colo <> '' AND scan_rtt_ms > 0 ORDER BY scan_rtt_ms ASC`).Scan(&extra).Error; err != nil {
+		WHERE rtt_ms > 0 OR scan_rtt_ms > 0
+		ORDER BY coalesce(nullif(scan_rtt_ms, 0), rtt_ms) ASC`).Scan(&extra).Error; err != nil {
 		return nil, err
 	}
 	for _, ip := range extra {
@@ -149,6 +167,12 @@ func benchCandidates(db *gorm.DB, limit int) ([]string, error) {
 		}
 	}
 	return ips, nil
+}
+
+// markAttempted records a failed attempt so the candidate ordering moves past
+// the entry without claiming a throughput reading.
+func markAttempted(db *gorm.DB, ip string, at time.Time) error {
+	return db.Exec(`UPDATE entry_ips SET attempted_at = ? WHERE ip = ?`, at, ip).Error
 }
 
 // storeThroughput writes the measurement, inserting a row when the entry was

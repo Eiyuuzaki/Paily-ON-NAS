@@ -38,6 +38,12 @@ type EntryIP struct {
 	// ThroughputAt is when ThroughputKbps was measured, so a stale number can be
 	// discounted without discarding the row.
 	ThroughputAt *time.Time `gorm:""`
+	// AttemptedAt is when a bench last tried this entry, whether or not it
+	// answered. Kept apart from ThroughputAt so a failure never reads as a
+	// measurement; candidate ordering uses the later of the two, which makes an
+	// entry that keeps failing step aside instead of being retried first on every
+	// run.
+	AttemptedAt *time.Time `gorm:""`
 }
 
 func (EntryIP) TableName() string { return "entry_ips" }

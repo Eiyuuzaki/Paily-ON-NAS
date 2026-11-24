@@ -36,7 +36,7 @@ var coloRegion = map[string]string{
 	"LAX": "US", "SJC": "US", "SEA": "US", "ORD": "US", "DFW": "US",
 	"IAD": "US", "EWR": "US", "ATL": "US", "MIA": "US",
 	"LHR": "GB", "FRA": "DE", "AMS": "NL", "CDG": "FR", "SYD": "AU",
-	"TPE": "TW", "BKK": "TH", "KUL": "MY", "SGN": "VN", "MNL": "PH",
+	"TPE": "TW", "KHH": "TW", "BKK": "TH", "KUL": "MY", "SGN": "VN", "MNL": "PH",
 }
 
 // RegionForColo converts a colo code to a region code ("" when unknown).
