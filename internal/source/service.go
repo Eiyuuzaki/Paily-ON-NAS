@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/paging"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
@@ -64,7 +65,7 @@ type ListFilter struct {
 
 // List returns paginated sources matching the given filters.
 func (s *Service) List(ctx context.Context, f ListFilter) ([]model.Source, int64, error) {
-	page, limit := normalise(f.Page, f.Limit)
+	page, limit := paging.Normalise(f.Page, f.Limit)
 	q := s.db.WithContext(ctx).Model(&model.Source{})
 	if f.Type != "" {
 		q = q.Where("type = ?", f.Type)
@@ -383,18 +384,4 @@ func (s *Service) ActiveSources(ctx context.Context) ([]model.Source, error) {
 		return nil, err
 	}
 	return sources, nil
-}
-
-// normalise clamps page/limit to valid ranges.
-func normalise(page, limit int) (int, int) {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	return page, limit
 }

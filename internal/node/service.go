@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/paging"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -46,7 +47,7 @@ type NodeListFilter struct {
 
 // List returns a filtered, paginated slice of nodes and the total count.
 func (s *Service) List(ctx context.Context, f NodeListFilter) ([]model.Node, int64, error) {
-	page, limit := normalise(f.Page, f.Limit)
+	page, limit := paging.Normalise(f.Page, f.Limit)
 	// Archived nodes stay in the table so their hash keeps blocking re-ingestion.
 	// They are not part of the pool the list page is meant to show.
 	q := s.db.WithContext(ctx).Model(&model.Node{}).Where("archived_at IS NULL")
@@ -145,20 +146,6 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.db.WithContext(ctx).Delete(&model.Node{}, "id = ?", id).Error
 }
 
-// normalise clamps page/limit to sane defaults.
-func normalise(page, limit int) (int, int) {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	return page, limit
-}
-
 // splitCSV splits a comma-separated string, trimming whitespace.
 func splitCSV(s string) []string {
 	parts := strings.Split(s, ",")
@@ -174,7 +161,7 @@ func splitCSV(s string) []string {
 // GetInitialChecks returns paginated initial check records for a node, newest first.
 // When tag is non-nil, results are filtered to that checker tag.
 func (s *Service) GetInitialChecks(ctx context.Context, nodeID uuid.UUID, page, limit int, tag *string) ([]model.NodeInitialCheck, int64, error) {
-	page, limit = normalise(page, limit)
+	page, limit = paging.Normalise(page, limit)
 	q := s.db.WithContext(ctx).Model(&model.NodeInitialCheck{}).Where("node_id = ?", nodeID).Order("checked_at DESC")
 	if tag != nil && *tag != "" {
 		q = q.Where("checker_tag = ?", *tag)
@@ -193,7 +180,7 @@ func (s *Service) GetInitialChecks(ctx context.Context, nodeID uuid.UUID, page, 
 // GetDeepChecks returns paginated deep check records for a node, newest first.
 // When tag is non-nil, results are filtered to that checker tag.
 func (s *Service) GetDeepChecks(ctx context.Context, nodeID uuid.UUID, page, limit int, tag *string) ([]model.NodeDeepCheck, int64, error) {
-	page, limit = normalise(page, limit)
+	page, limit = paging.Normalise(page, limit)
 	q := s.db.WithContext(ctx).Model(&model.NodeDeepCheck{}).Where("node_id = ?", nodeID).Order("checked_at DESC")
 	if tag != nil && *tag != "" {
 		q = q.Where("checker_tag = ?", *tag)

@@ -13,6 +13,7 @@ import (
 	"github.com/Eiyuuzaki/paily-on-nas/internal/cache"
 	"github.com/Eiyuuzaki/paily-on-nas/internal/db/model"
 	nodePkg "github.com/Eiyuuzaki/paily-on-nas/internal/node"
+	"github.com/Eiyuuzaki/paily-on-nas/internal/paging"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -94,7 +95,7 @@ func (h *NodeHandler) List(c *gin.Context, params api.NodeListParams) {
 		summaries[i] = nodeToSummary(&nodes[i], initChecks[nodes[i].ID], deepChecks[nodes[i].ID], nodeSrcs[nodes[i].ID])
 	}
 
-	page, limit := normaliseNodeListPageLimit(f.Page, f.Limit)
+	page, limit := paging.Normalise(f.Page, f.Limit)
 	totalPages := 0
 	if limit > 0 {
 		totalPages = int((total + int64(limit) - 1) / int64(limit))
@@ -137,7 +138,10 @@ func (h *NodeHandler) Get(c *gin.Context, id openapi_types.UUID) {
 
 	// Query per-tag scores.
 	var tagScoreRows []model.NodeTagScore
-	h.db.WithContext(ctx).Where("node_id = ?", nodeID).Find(&tagScoreRows)
+	if err := h.db.WithContext(ctx).Where("node_id = ?", nodeID).Find(&tagScoreRows).Error; err != nil {
+		response.InternalError(c, "failed to load tag scores")
+		return
+	}
 	tagScores := make(map[string]float64, len(tagScoreRows))
 	for _, ts := range tagScoreRows {
 		tagScores[ts.CheckerTag] = ts.Score
@@ -145,14 +149,17 @@ func (h *NodeHandler) Get(c *gin.Context, id openapi_types.UUID) {
 
 	// Query latest deep check per tag (correlated subquery).
 	var deepByTagRows []model.NodeDeepCheck
-	h.db.WithContext(ctx).Raw(`
+	if err := h.db.WithContext(ctx).Raw(`
 		SELECT * FROM node_deep_checks dc
 		WHERE node_id = ?
 		AND checked_at = (
 			SELECT MAX(dc2.checked_at) FROM node_deep_checks dc2
 			WHERE dc2.node_id = dc.node_id AND dc2.checker_tag = dc.checker_tag
 		)
-	`, nodeID).Scan(&deepByTagRows)
+	`, nodeID).Scan(&deepByTagRows).Error; err != nil {
+		response.InternalError(c, "failed to load per-tag deep checks")
+		return
+	}
 	latestDeepByTag := make(map[string]*model.NodeDeepCheck, len(deepByTagRows))
 	for i := range deepByTagRows {
 		latestDeepByTag[deepByTagRows[i].CheckerTag] = &deepByTagRows[i]
@@ -279,19 +286,6 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
-}
-
-func normaliseNodeListPageLimit(page, limit int) (int, int) {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	return page, limit
 }
 
 // batchQueryError wraps a failure from one batch of a batched load.
