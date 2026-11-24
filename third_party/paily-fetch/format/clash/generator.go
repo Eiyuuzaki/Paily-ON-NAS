@@ -143,7 +143,13 @@ func (g *Generator) Generate(cfg format.FormatConfig) ([]byte, error) {
 				"url":       "https://cp.cloudflare.com/generate_204", // 夜间 gstatic 被 GFW 掐，区域组健康检查改 CF 自家（11-18）
 				"interval":  300,
 				"tolerance": 50,
-				"proxies":   sorted,
+				// lazy: an unselected region group must not probe its members.
+				// Without it, every client walks all 31 groups every 5 minutes and
+				// each walk is one Worker request per node: ~162k requests per
+				// device per day against a 100k/day account quota. The template
+				// groups already set lazy; this only makes generated ones match.
+				"lazy":    true,
+				"proxies": sorted,
 			}
 			regionGroups = append(regionGroups, gm)
 		}
